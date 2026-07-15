@@ -1,5 +1,15 @@
 {
   "$defs": {
+    "AdmissionStatus": {
+      "enum": [
+        "admitted",
+        "expired",
+        "invalidated",
+        "rejected",
+        "cancelled"
+      ],
+      "type": "string"
+    },
     "AppliedChange": {
       "additionalProperties": false,
       "properties": {
@@ -59,6 +69,16 @@
         "workspace_revision"
       ],
       "type": "object"
+    },
+    "ApprovalDecisionKind": {
+      "enum": [
+        "approved",
+        "rejected",
+        "expired",
+        "invalidated",
+        "cancelled"
+      ],
+      "type": "string"
     },
     "ApprovalRequest": {
       "additionalProperties": false,
@@ -663,6 +683,203 @@
         "quarantined",
         "manual_disposition",
         "reconciled"
+      ],
+      "type": "string"
+    },
+    "AuthorityApprovalRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_request": {
+          "$ref": "#/$defs/ApprovalRequest"
+        },
+        "configuration_key": {
+          "$ref": "#/$defs/ConfigurationKey"
+        },
+        "expected_workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        },
+        "live_state_fingerprint": {
+          "$ref": "#/$defs/LiveStateFingerprint"
+        },
+        "mutation_strategy": {
+          "$ref": "#/$defs/MutationStrategy"
+        },
+        "operation_type": {
+          "$ref": "#/$defs/OperationType"
+        },
+        "policy_versions": {
+          "items": {
+            "$ref": "#/$defs/VersionedName"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "summary_digest": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workspace_revision": {
+          "$ref": "#/$defs/WorkspaceRevision"
+        }
+      },
+      "required": [
+        "approval_request",
+        "workflow_id",
+        "configuration_key",
+        "live_state_fingerprint",
+        "workspace_revision",
+        "operation_type",
+        "mutation_strategy",
+        "expected_workflow_version",
+        "policy_versions",
+        "summary_digest"
+      ],
+      "type": "object"
+    },
+    "AuthorityAuthorization": {
+      "additionalProperties": false,
+      "properties": {
+        "authority_decision_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "authority_instance_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "execution_authorization": {
+          "$ref": "#/$defs/ExecutionAuthorization"
+        },
+        "policy_versions": {
+          "items": {
+            "$ref": "#/$defs/VersionedName"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "preview_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workspace_revision": {
+          "$ref": "#/$defs/WorkspaceRevision"
+        }
+      },
+      "required": [
+        "execution_authorization",
+        "authority_decision_id",
+        "authority_instance_id",
+        "preview_id",
+        "workspace_revision",
+        "policy_versions"
+      ],
+      "type": "object"
+    },
+    "AuthorityDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_request_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "authenticated_principal_reference": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authority_instance_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "decision_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "decision_kind": {
+          "$ref": "#/$defs/ApprovalDecisionKind"
+        },
+        "reason_code": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision_id",
+        "approval_request_id",
+        "authority_instance_id",
+        "decision_kind",
+        "decided_at",
+        "authenticated_principal_reference",
+        "reason_code"
+      ],
+      "type": "object"
+    },
+    "AuthorizationAdmission": {
+      "additionalProperties": false,
+      "properties": {
+        "execution_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason_code": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AdmissionStatus"
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "workflow_id",
+        "status",
+        "reason_code",
+        "recorded_at"
+      ],
+      "type": "object"
+    },
+    "AuthorizationState": {
+      "enum": [
+        "issued",
+        "consuming",
+        "consumed",
+        "expired",
+        "invalidated",
+        "rejected",
+        "cancelled"
       ],
       "type": "string"
     },
@@ -5063,8 +5280,8 @@
       "type": "object"
     }
   },
-  "$id": "https://powerfactory-agent.local/schemas/domain/0.6.0/domain.schema.json",
+  "$id": "https://powerfactory-agent.local/schemas/domain/0.7.0/domain.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PowerFactory Agent Domain Contracts",
-  "x-schema-version": "0.6.0"
+  "x-schema-version": "0.7.0"
 }

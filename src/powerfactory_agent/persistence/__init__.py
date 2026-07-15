@@ -1,6 +1,13 @@
 """Platform-independent persistence primitives."""
 
 from .database import DatabaseVersionError, SCHEMA_VERSION, SQLiteDatabase
+from .approval_store import (
+    ApprovalAuthorityStore,
+    AuthorityApprovalRequestNotFoundError,
+    AuthorityAuthorizationNotFoundError,
+    AuthorityRequestExpiredError,
+    AuthorityTerminalDecisionError,
+)
 from .calculation_store import (
     CalculationContextMismatchError,
     CalculationNotFoundError,

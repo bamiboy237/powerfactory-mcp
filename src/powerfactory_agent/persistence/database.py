@@ -8,7 +8,7 @@ import sqlite3
 from typing import Iterator
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 _MIGRATION_1 = (
@@ -184,6 +184,74 @@ _MIGRATION_4 = (
 )
 
 
+# Authority requests, decisions, and admission results are durable facts.  The
+# authorization state is the sole mutable row and every change is accompanied
+# by an append-only state event.
+_MIGRATION_5 = (
+    """CREATE TABLE authority_approval_requests (
+    approval_request_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL REFERENCES workflow_records(workflow_id),
+    expires_at TEXT NOT NULL,
+    request_json TEXT NOT NULL
+)""",
+    """CREATE TABLE authority_decisions (
+    decision_id TEXT PRIMARY KEY,
+    approval_request_id TEXT NOT NULL UNIQUE REFERENCES authority_approval_requests(approval_request_id),
+    decision_kind TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    decision_json TEXT NOT NULL
+)""",
+    """CREATE TABLE authority_authorizations (
+    execution_id TEXT PRIMARY KEY,
+    approval_request_id TEXT NOT NULL UNIQUE REFERENCES authority_approval_requests(approval_request_id),
+    workflow_id TEXT NOT NULL REFERENCES workflow_records(workflow_id),
+    authority_instance_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    authorization_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)""",
+    """CREATE TABLE authority_authorization_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    execution_id TEXT NOT NULL REFERENCES authority_authorizations(execution_id),
+    state_before TEXT,
+    state_after TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    occurred_at TEXT NOT NULL
+)""",
+    """CREATE TABLE authority_admissions (
+    execution_id TEXT PRIMARY KEY REFERENCES authority_authorizations(execution_id),
+    admission_json TEXT NOT NULL
+)""",
+    "CREATE INDEX authority_requests_workflow_idx ON authority_approval_requests(workflow_id)",
+    "CREATE INDEX authority_authorizations_workflow_idx ON authority_authorizations(workflow_id, state)",
+    """CREATE TRIGGER authority_decisions_immutable_update
+    BEFORE UPDATE ON authority_decisions BEGIN
+        SELECT RAISE(ABORT, 'authority decisions are append-only');
+    END""",
+    """CREATE TRIGGER authority_decisions_immutable_delete
+    BEFORE DELETE ON authority_decisions BEGIN
+        SELECT RAISE(ABORT, 'authority decisions are append-only');
+    END""",
+    """CREATE TRIGGER authority_authorization_events_immutable_update
+    BEFORE UPDATE ON authority_authorization_events BEGIN
+        SELECT RAISE(ABORT, 'authority authorization events are append-only');
+    END""",
+    """CREATE TRIGGER authority_authorization_events_immutable_delete
+    BEFORE DELETE ON authority_authorization_events BEGIN
+        SELECT RAISE(ABORT, 'authority authorization events are append-only');
+    END""",
+    """CREATE TRIGGER authority_admissions_immutable_update
+    BEFORE UPDATE ON authority_admissions BEGIN
+        SELECT RAISE(ABORT, 'authority admissions are append-only');
+    END""",
+    """CREATE TRIGGER authority_admissions_immutable_delete
+    BEFORE DELETE ON authority_admissions BEGIN
+        SELECT RAISE(ABORT, 'authority admissions are append-only');
+    END""",
+)
+
+
 class DatabaseVersionError(RuntimeError):
     """The database schema is newer than this process understands."""
 
@@ -259,6 +327,11 @@ class SQLiteDatabase:
                 for statement in _MIGRATION_4:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version = 4")
+                current = 4
+            if current < 5:
+                for statement in _MIGRATION_5:
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version = 5")
 
 
 __all__ = ["DatabaseVersionError", "SCHEMA_VERSION", "SQLiteDatabase"]

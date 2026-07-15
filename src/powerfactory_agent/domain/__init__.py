@@ -62,6 +62,7 @@ from .inventory import (
     ModelSummaryRequest,
 )
 from .calculations import *
+from .approval import *
 from .workflow import (
     AuditActorClass,
     AuditEvent,
