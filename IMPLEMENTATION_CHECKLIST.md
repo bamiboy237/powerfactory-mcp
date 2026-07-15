@@ -4,12 +4,36 @@ This file is only an execution index. Implementation details remain in [`PRODUCT
 
 ## Agent rules
 
-- Start with the first unchecked item whose prerequisite is checked.
+- Track two independent frontiers:
+  - the **acceptance frontier** is the first unchecked item whose prerequisite is checked;
+  - the **development frontier** may prepare later platform-independent work when doing so does not invent PowerFactory evidence, accept a provisional specification, or enable dependent live behavior.
+- Checklist boxes record accepted completion only. Prepared code and provisional specifications are recorded in the preparation table below, not by checking an item early.
 - Open only the linked roadmap section; use `rg -n '^##|^###' PRODUCT_ROADMAP.md` to locate narrower subsections.
 - Do not invent behavior covered by a required but unaccepted companion specification.
 - A deliverable is complete only when its linked roadmap success criteria and dependency-matrix gate pass.
 - Record commands and evidence in `specs/delivery/buildout-dependency-matrix.md` once created.
 - Update Graphify after material code changes and record upstream reuse in the adoption ledger.
+
+## Current frontiers
+
+| Frontier | Current position | Meaning |
+|---|---|---|
+| Acceptance | Item 5 / Buildout 0 | `BLOCKED — Windows validation required`; the prepared probe is not accepted evidence. |
+| Development | Buildout 2 adapter integration, then Buildout 4 | The platform-independent Buildout 2 owner/primitive boundary and Buildout 3 inventory are prepared. Next connect the provisional PowerFactory 2026 adapter behind the owner, then build the persistent graph without enabling unvalidated live behavior. |
+
+## Preparation record
+
+| Scope | Preparation status | Acceptance status |
+|---|---|---|
+| Buildout 0 | Lifecycle, capability, cleanup, and identity probes are implemented with portable contract tests and a Windows handoff. | `BLOCKED — Windows validation required`; item 5 remains unchecked. |
+| `DEP` and `ID` | Provisional `v0.1.0` specifications exist under `specs/architecture/` and separate deterministic requirements from Windows decision points. | Not accepted; Windows evidence must reconcile the open decision points before item 6 can be checked. |
+| Buildout 1 / `DOM` | Immutable typed contracts, canonical JSON/digests, strict defaults, structured errors, and the deterministic bounded headline workflow are implemented. The additive provisional domain schema is `0.3.0` after admitting inventory and primitive-gateway DTOs. | Prepared, not accepted. B0, `DEP`, and `ID` acceptance prerequisites remain unsatisfied; item 7 stays unchecked. |
+| Buildout 2 portable core | A durable SQLite operation store, bounded single-owner FIFO worker, separate queue/client/health deadlines, quarantine/reconciliation behavior, strict vendor-primitive protocol, and deterministic primitive fake are implemented. The older monolithic fake is explicitly retained only as `DeterministicHeadlineHarness` compatibility scaffolding. | Partially prepared, not accepted. The provisional `PowerFactoryGateway2026`, authenticated OS singleton/health path, and all real lifecycle/concurrency evidence remain outstanding; item 8 stays unchecked. |
+| Buildout 3 portable core | Snapshot-bound model summary, bounded component pages, exact asset lookup, deterministic counts, and structured unsupported/unresolved warnings are implemented over a narrow read-only gateway view. | Prepared locally, not accepted. Native identity, class mapping, unsupported-object, pagination, and fixture accuracy evidence remain outstanding; item 9 stays unchecked. |
+
+The headline harness's registered authorization, lock, counters, and direct-ledger behavior are test mechanisms only. They do not satisfy the future approval-authority, lease/fencing, durable workflow, persistence, or real mutation-strategy gates. The primitive fake's write path is disabled by default and exists only for guarded contract/failure tests.
+
+Foundation milestone verification on 2026-07-14: `uv run pytest -q` (`106 passed`, `230 subtests`), generated schema `--check`, `compileall`, `git diff --check`, and `graphify update .` all passed. This is local preparation evidence, not acceptance evidence for any Windows-dependent gate.
 
 ## Delivery sequence
 
@@ -44,3 +68,5 @@ This file is only an execution index. Implementation details remain in [`PRODUCT
 | [ ] | 27 | Package the supported environment and add versions deliberately | Foundation stable; 26 checked | Fresh-machine probe and every claimed compatibility combination pass | [Buildout 16](PRODUCT_ROADMAP.md#buildout-16--packaging-and-multi-version-support) |
 | [ ] | 28 | Add optional clients without duplicating core behavior | 27 checked | Client-invariance and no-direct-PowerFactory-access gates pass | [Buildout 17](PRODUCT_ROADMAP.md#buildout-17--optional-client-ecosystem) |
 | [ ] | 29 | Verify the complete product foundation end to end | 1–27 checked; 28 optional | Every product-foundation completion criterion is demonstrated and evidenced | [Complete Product Foundation](PRODUCT_ROADMAP.md#16-definition-of-the-complete-product-foundation) |
+
+Buildout 0 code preparation exists, but item 5 stays unchecked: **BLOCKED — Windows validation required**.

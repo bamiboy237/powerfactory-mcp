@@ -24,11 +24,12 @@ Both working trees were clean at inspection time and matched the commits above. 
 
 - **Upstream:** PowerMCP @ `52deb675d3a83fd63948a18175158590622cc5ef` — MIT.
 - **Source/test anchors:** [`PowerFactory/MCP_PowerFactory.py::_pf`, `_load_modules`, `_pf_executor`](https://github.com/Power-Agent/PowerMCP/blob/52deb675d3a83fd63948a18175158590622cc5ef/PowerFactory/MCP_PowerFactory.py#L94-L111); [`PowerFactory/Agent_DIgSILENT.py::DIgSILENTAgent.connect`](https://github.com/Power-Agent/PowerMCP/blob/52deb675d3a83fd63948a18175158590622cc5ef/PowerFactory/Agent_DIgSILENT.py#L256-L296). Graph path: `_pf() <--calls-- modify_parameter()`, with all calculation/import tools also adjacent to `_pf()`. No PowerFactory-specific executor or thread-affinity test exists in the pinned `PowerFactory/` or `tests/` trees.
-- **Classification/status:** **Learned pattern** — candidate, not adopted.
+- **Classification/status:** **Learned pattern** — adopted for the platform-independent serialized owner; native PowerFactory acceptance remains deferred.
 - **Destination:** Buildout 2 serialized PowerFactory gateway executor and lazy application/session lifecycle boundary.
 - **Product contract/rationale:** one owned execution lane must preserve vendor thread affinity and prevent concurrent engine entry; importing the product or starting MCP must not require PowerFactory to be installed or running.
 - **Upstream assumptions to remove:** process-global executor and application handles, unbounded `Future.result()`, no queue admission limit, no operation deadline/cancellation semantics, and the assumption that `GetApplicationExt()` attaches to the desired session.
 - **Validation plan:** fake-gateway tests submit concurrent calls and assert FIFO execution on one stable thread, bounded queue rejection, timeout propagation, and no vendor import before first gateway call; the Windows PowerFactory 2026 probe repeats start/use/close and records thread IDs, process identity, attach/start behavior, and recovery after a failed call.
+- **Preparation evidence:** `SerializedOperationWorker` uses one bounded FIFO lane and stable handler thread, durable idempotent operation records, separate queue/client/health deadlines, non-cancelling client timeout, quarantine, and restart reconciliation. Local concurrency, timeout, late-result, and recovery tests pass. Native thread affinity, lazy vendor startup, and thread-versus-process acceptance remain `BLOCKED — Windows validation required`.
 
 ### PM-02 — Reuse the stdio launcher and idempotent local client-configuration pattern
 
@@ -44,11 +45,12 @@ Both working trees were clean at inspection time and matched the commits above. 
 
 - **Upstream:** PowerMCP @ `52deb675d3a83fd63948a18175158590622cc5ef` — MIT.
 - **Source/test anchors:** [`PowerFactory/MCP_PowerFactory.py::_to_json`](https://github.com/Power-Agent/PowerMCP/blob/52deb675d3a83fd63948a18175158590622cc5ef/PowerFactory/MCP_PowerFactory.py#L113-L143), which recursively converts NumPy arrays/scalars, stringifies mapping keys, converts tuples to arrays, and maps `NaN`/infinity to `null`. No focused upstream serialization test was found.
-- **Classification/status:** **Adapted code** — candidate; any copied logic requires MIT provenance in the adapted source.
+- **Classification/status:** **Learned pattern** — adopted through a product-owned strict serializer; no upstream code was copied.
 - **Destination:** Buildout 1 typed domain/schema serialization helpers, before Buildout 11 MCP response encoding.
 - **Product contract/rationale:** generated JSON schemas must produce deterministic JSON-compatible values and an explicit policy for non-finite engine results.
 - **Upstream assumptions to remove:** returning pre-encoded JSON strings from tools, silently replacing invalid numbers without field-level diagnostics, optional NumPy behavior changing output shape, unrestricted payload size, and accepting arbitrary objects through a recursive fallback.
 - **Validation plan:** property and golden tests cover nested typed models, NumPy scalars/arrays when installed, tuples, non-string keys, `NaN`/±infinity policy, deterministic ordering, payload limits, and round-trip validation against generated response schemas; MCP tests assert one encoding layer only.
+- **Preparation evidence:** canonical JSON and generated-schema tests cover admitted typed models, deterministic ordering, Unicode normalization, UTC timestamps, typed digests, payload bounds, and rejection of arbitrary or non-finite values. NumPy is not an admitted public dependency, and MCP one-layer encoding remains a Buildout 11 gate.
 
 ### PM-04 — Model project import/export and study-case activation as explicit workflows
 
@@ -74,11 +76,12 @@ Both working trees were clean at inspection time and matched the commits above. 
 
 - **Upstream:** PowerMCP @ `52deb675d3a83fd63948a18175158590622cc5ef` — MIT.
 - **Source/test anchors:** [`MCP_PowerFactory.py::run_loadflow`](https://github.com/Power-Agent/PowerMCP/blob/52deb675d3a83fd63948a18175158590622cc5ef/PowerFactory/MCP_PowerFactory.py#L291-L339), [`DIgSILENTAgent.load_flow` and `_export_loadflow_snapshot_to_csv`](https://github.com/Power-Agent/PowerMCP/blob/52deb675d3a83fd63948a18175158590622cc5ef/PowerFactory/Agent_DIgSILENT.py#L904-L1063), [`export_results_to_csv`](https://github.com/Power-Agent/PowerMCP/blob/52deb675d3a83fd63948a18175158590622cc5ef/PowerFactory/Agent_DIgSILENT.py#L517-L552), [`run_pipeline`](https://github.com/Power-Agent/PowerMCP/blob/52deb675d3a83fd63948a18175158590622cc5ef/PowerFactory/Agent_DIgSILENT.py#L1207-L1270), and [`MCP_PowerFactory.py::read_results_csv`](https://github.com/Power-Agent/PowerMCP/blob/52deb675d3a83fd63948a18175158590622cc5ef/PowerFactory/MCP_PowerFactory.py#L494-L599). No PowerFactory-specific calculation/result test was found.
-- **Classification/status:** **Learned pattern** — candidate, not adopted.
+- **Classification/status:** **Learned pattern** — adopted in the vendor-primitive command/result boundary; native PowerFactory acceptance remains deferred.
 - **Destination:** Buildout 5 calculation service, immutable result store, result overlays, and gateway command/result adapters.
 - **Product contract/rationale:** command configuration/execution, convergence evidence, result extraction, provenance, and presentation must be separate typed steps; files may be evidence artifacts but not canonical workflow state.
 - **Upstream assumptions to remove:** active study case as implicit input, default `ComLdf` settings, fixed attribute lists, CSV/latest-file discovery, timestamps as identity, swallowed attribute-read errors, free-form status strings, and a monolithic RMS pipeline.
 - **Validation plan:** fake and real gateway tests assert exact command attributes, nonzero `Execute()` handling, immutable calculation IDs, active-context/revision binding, deterministic typed extraction, unsupported-variable diagnostics, row/payload bounds, restart-safe retrieval, and equivalence between stored raw evidence and derived overlays.
+- **Preparation evidence:** the primitive gateway exposes separate typed `execute_command` and `collect_results` calls. Result cells explicitly distinguish available, missing, unsupported, and non-finite values while preserving source evidence and normalized quantities. Immutable calculation storage, overlays, and native command/result parity remain Buildout 5 work.
 
 ### PM-R01 — Reject immediate unrestricted `modify_parameter` writes
 
@@ -136,11 +139,12 @@ Both working trees were clean at inspection time and matched the commits above. 
 
 - **Upstream:** `powerfactory-tools` @ `89adb7bf390912652201d0819395bdd0e8150688` — BSD-3-Clause.
 - **Source/test anchors:** [`pf2026/types.py::PFClassId`, `FolderType`, protocols`](https://github.com/ieeh-tu-dresden/powerfactory-tools/blob/89adb7bf390912652201d0819395bdd0e8150688/src/powerfactory_tools/versions/pf2026/types.py#L17-L125), [`pf2026/interface.py::grid_elements`, `first_of`, `elements_of`](https://github.com/ieeh-tu-dresden/powerfactory-tools/blob/89adb7bf390912652201d0819395bdd0e8150688/src/powerfactory_tools/versions/pf2026/interface.py#L1782-L1910), and typed methods such as [`terminals`](https://github.com/ieeh-tu-dresden/powerfactory-tools/blob/89adb7bf390912652201d0819395bdd0e8150688/src/powerfactory_tools/versions/pf2026/interface.py#L1294-L1317) and [`loads`](https://github.com/ieeh-tu-dresden/powerfactory-tools/blob/89adb7bf390912652201d0819395bdd0e8150688/src/powerfactory_tools/versions/pf2026/interface.py#L1590-L1613). No focused query/typing behavior test exists in the pinned tests.
-- **Classification/status:** **Learned pattern** — candidate, not adopted.
+- **Classification/status:** **Learned pattern** — adopted in the typed primitive-query and bounded inventory contracts; native class mapping remains deferred.
 - **Destination:** Buildout 1 typed domain contracts and Buildouts 2–3 gateway inventory/query adapters.
 - **Product contract/rationale:** callers select admitted object kinds and bounded filters; only the gateway translates those types into PowerFactory class IDs and query calls.
 - **Upstream assumptions to remove:** wildcard-by-default APIs, `first_of` silently selecting one ambiguous match, list materialization without pagination, runtime casts as validation, active-grid global state, and raw `DataObject` escape across the gateway.
 - **Validation plan:** fake and real contract tests cover exact class mapping, ambiguity errors, unsupported classes, active/out-of-service semantics, deterministic ordering, pagination/limits, bounded traversal, and conversion to owned DTOs with no vendor object leakage.
+- **Preparation evidence:** public primitive queries use admitted, versioned class/attribute/relationship selectors with explicit scope, out-of-service policy, limits, cursor binding, completeness, truncation, and warnings. The inventory service returns owned DTOs and fails closed on ambiguous project or product identity evidence. Exact PowerFactory class translation remains `BLOCKED — Windows validation required`.
 
 ### PFT-03 — Preserve and restore project unit settings around normalized reads
 

@@ -1,0 +1,1 @@
+golden-fixture:v1:sha256:a0c0311d9df0cc24b94bcf214517f5d246af0b12feff07b159d067dffd4329f4
