@@ -104,6 +104,113 @@ class WorkflowStoreTests(unittest.TestCase):
             )
         self.assertEqual(WorkflowState.PREVIEWING, self.store.workflow(WORKFLOW_ID).state)
 
+    def _advance_to_executing(self) -> None:
+        self._transition()
+        self._transition(
+            command_name="record_preview",
+            idempotency_key="preview-2",
+            expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 1),
+            target_state=WorkflowState.AWAITING_AUTHORIZATION,
+            transition_event_type=AuditEventType.PREVIEW_PERSISTED,
+        )
+        self._transition(
+            command_name="admit_execution",
+            idempotency_key="admit-1",
+            expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 2),
+            target_state=WorkflowState.EXECUTION_ADMISSION,
+            transition_event_type=AuditEventType.ADMISSION_REVALIDATED,
+        )
+        self._transition(
+            command_name="start_execution",
+            idempotency_key="execute-1",
+            expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 3),
+            target_state=WorkflowState.EXECUTING,
+            transition_event_type=AuditEventType.SUBMITTED,
+        )
+
+    def test_recovery_can_close_a_proven_no_effect_without_replaying_execution(self) -> None:
+        self._advance_to_executing()
+        recovery = self._transition(
+            command_name="require_reconciliation",
+            idempotency_key="recover-1",
+            expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 4),
+            target_state=WorkflowState.RECONCILIATION_REQUIRED,
+            transition_event_type=AuditEventType.RECOVERY_STARTED,
+            actor_class=AuditActorClass.RECOVERY_SERVICE,
+            evidence_reference="evidence:v1:uncertain-owner-outcome",
+            recovery_reference="recovery:v1:intent-observation",
+        )
+        self.assertEqual(WorkflowState.RECONCILIATION_REQUIRED, self.store.workflow(WORKFLOW_ID).state)
+        self.assertEqual(5, recovery.resulting_workflow_version.counter)
+
+        recovered = self._transition(
+            command_name="recover_no_effect",
+            idempotency_key="recover-2",
+            expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 5),
+            target_state=WorkflowState.FAILED_BEFORE_EFFECT,
+            transition_event_type=AuditEventType.RECONCILED,
+            actor_class=AuditActorClass.RECOVERY_SERVICE,
+            evidence_reference="evidence:v1:before-classification",
+            recovery_reference="recovery:v1:before-confirmed",
+        )
+        self.assertEqual(WorkflowState.FAILED_BEFORE_EFFECT, self.store.workflow(WORKFLOW_ID).state)
+        self.assertEqual(6, recovered.resulting_workflow_version.counter)
+        self.assertEqual(recovered, self._transition(
+            command_name="recover_no_effect",
+            idempotency_key="recover-2",
+            expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 6),
+            target_state=WorkflowState.FAILED_BEFORE_EFFECT,
+            transition_event_type=AuditEventType.RECONCILED,
+            actor_class=AuditActorClass.RECOVERY_SERVICE,
+            evidence_reference="evidence:v1:ignored-on-replay",
+            recovery_reference="recovery:v1:ignored-on-replay",
+        ))
+        self.assertEqual(12, len(self.store.audit_events(WORKFLOW_ID)))
+
+    def test_reconciliation_can_quarantine_and_prevents_no_effect_recovery(self) -> None:
+        self._advance_to_executing()
+        self._transition(
+            command_name="require_reconciliation",
+            idempotency_key="recover-1",
+            expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 4),
+            target_state=WorkflowState.RECONCILIATION_REQUIRED,
+            transition_event_type=AuditEventType.RECOVERY_STARTED,
+            actor_class=AuditActorClass.RECOVERY_SERVICE,
+            evidence_reference="evidence:v1:uncertain-owner-outcome",
+        )
+        quarantined = self._transition(
+            command_name="quarantine",
+            idempotency_key="quarantine-1",
+            expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 5),
+            target_state=WorkflowState.QUARANTINED,
+            transition_event_type=AuditEventType.QUARANTINED,
+            actor_class=AuditActorClass.RECOVERY_SERVICE,
+            evidence_reference="evidence:v1:unavailable-classification",
+            recovery_reference="quarantine:v1:reconciliation-unavailable",
+        )
+        self.assertEqual(WorkflowState.QUARANTINED, self.store.workflow(WORKFLOW_ID).state)
+        self.assertEqual(6, quarantined.resulting_workflow_version.counter)
+        self.assertEqual(quarantined, self._transition(
+            command_name="quarantine",
+            idempotency_key="quarantine-1",
+            expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 6),
+            target_state=WorkflowState.QUARANTINED,
+            transition_event_type=AuditEventType.QUARANTINED,
+            actor_class=AuditActorClass.RECOVERY_SERVICE,
+            evidence_reference="evidence:v1:ignored-on-replay",
+        ))
+        with self.assertRaises(ValueError):
+            self._transition(
+                command_name="recover_no_effect",
+                idempotency_key="recover-after-quarantine",
+                expected_workflow_version=WorkflowVersion(WORKFLOW_ID, 6),
+                target_state=WorkflowState.FAILED_BEFORE_EFFECT,
+                transition_event_type=AuditEventType.RECONCILED,
+                actor_class=AuditActorClass.RECOVERY_SERVICE,
+                evidence_reference="evidence:v1:forbidden-after-quarantine",
+            )
+        self.assertEqual(WorkflowState.QUARANTINED, self.store.workflow(WORKFLOW_ID).state)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,10 @@ _LEGAL_TRANSITIONS: dict[str, tuple[WorkflowState, WorkflowState]] = {
     "complete": (WorkflowState.VERIFYING, WorkflowState.COMPLETED),
     "fail_before_effect": (WorkflowState.EXECUTING, WorkflowState.FAILED_BEFORE_EFFECT),
     "require_reconciliation": (WorkflowState.EXECUTING, WorkflowState.RECONCILIATION_REQUIRED),
+    "recover_no_effect": (
+        WorkflowState.RECONCILIATION_REQUIRED,
+        WorkflowState.FAILED_BEFORE_EFFECT,
+    ),
     "quarantine": (WorkflowState.RECONCILIATION_REQUIRED, WorkflowState.QUARANTINED),
     "start_rollback_preview": (WorkflowState.COMPLETED, WorkflowState.ROLLBACK_PREVIEWING),
     "record_rollback_preview": (
