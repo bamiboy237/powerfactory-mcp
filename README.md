@@ -1,11 +1,12 @@
 # PowerFactory MCP
 
 PowerFactory MCP is a local, authenticated MCP service for DIgSILENT
-PowerFactory 2026. The current release candidate gives Codex three real tools:
+PowerFactory 2026. The friend-test release gives Codex real tools for:
 
-- `get_session_status`
-- `inspect_active_project`
-- `run_powerfactory_connectivity_probe`
+- service and active-project inspection;
+- stable component identity and bounded inventory;
+- real load-flow execution, persisted results, and result comparison;
+- a persisted supported-class topology graph with bounded queries.
 
 Active-project inspection loads the installed `powerfactory.pyd` and returns
 bounded counts and samples for loads, terminals, and lines without executing a
@@ -16,18 +17,18 @@ project, changes model attributes, or falls back to a simulated engine.
 
 ## Install on Windows
 
-PowerFactory must be open with a safe project and study case active. Then run:
+PowerFactory must be open with a safe project and study case active. Open
+PowerShell and run this single command:
 
 ```powershell
-git clone https://github.com/bamiboy237/powerfactory-mcp.git
-cd powerfactory-mcp
-powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
+irm https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1 | iex
 ```
 
-The installer finds PowerFactory 2026, selects the matching Python runtime,
-creates the local MCP configuration and credential, runs the real probe twice,
-starts the loopback service, and registers it with Codex. Start Codex from the
-same PowerShell window when the installer finishes.
+The bootstrap downloads or updates the product. The guided installer then finds
+PowerFactory 2026, selects the matching Python runtime, creates the protected
+local MCP state and credential, runs the real probe twice, starts the loopback
+service, and registers it with Codex. It prints the exact protected launcher
+command to use when installation finishes.
 
 The installer requires `git`, `uv`, and the Codex CLI. It fails closed if it
 cannot find a compatible PowerFactory API, active context, valid licence, or a
@@ -41,13 +42,13 @@ material, customer models, or unsanitized results.
 
 ## Current Product Status
 
-This is a Windows friend-test release candidate, not the completed engineering
-automation product. It is ready to test installation, authentication, Codex MCP
-registration, active-model inspection, and the real PowerFactory lifecycle.
-The persistent graph/query core exists, but the PowerFactory 2026 topology
-extractor and stable identity registry are not yet validated, so graph tools are
-not exposed with fixture or partial data. Preview, approval, and mutation tools
-also remain gated.
+This is a Windows friend-test product, not a formal PowerFactory compatibility
+release. It contains no fake runtime fallback. The first tester can install it,
+inspect the active model, list and inspect identified assets, run load flows,
+retrieve and compare results, and query a persisted supported-class graph.
+Switches and three-winding transformers are not yet mapped, so graph responses
+explicitly report incomplete topology. Preview, approval, and mutation tools
+remain gated.
 
 Project execution state is recorded in
 [`IMPLEMENTATION_CHECKLIST.md`](IMPLEMENTATION_CHECKLIST.md). Architecture and

@@ -4,6 +4,11 @@ from .errors import *
 from .fake import DeterministicFakeGateway, DeterministicHeadlineHarness
 from .primitive_fake import DeterministicPrimitiveGateway
 from .powerfactory2026 import PowerFactory2026Vendor, PowerFactoryGateway2026
+from .native_powerfactory2026 import (
+    NativeMappingUnavailable,
+    NativePowerFactory2026Config,
+    NativePowerFactory2026Vendor,
+)
 from .owner import (
     GatewayOwnerHandler,
     OperationResultTypeError,

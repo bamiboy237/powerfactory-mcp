@@ -1,9 +1,9 @@
 # Friend Test: PowerFactory MCP
 
 This handoff tests a real, authenticated local MCP service against PowerFactory
-2026. The test is successful only when installation, the real lifecycle probe,
-service startup, Codex registration, and all three MCP tool calls work at the same
-Git commit.
+2026. The test is successful when automated installation, service startup,
+Codex registration, live inventory, calculation, persistence, and graph calls
+work at the same Git commit.
 
 ## Requirements
 
@@ -17,9 +17,7 @@ Open PowerFactory and activate the intended project and study case. Then open
 PowerShell:
 
 ```powershell
-git clone https://github.com/bamiboy237/powerfactory-mcp.git
-cd powerfactory-mcp
-powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
+irm https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1 | iex
 ```
 
 The installer detects `PowerFactory 2026\Python\*\powerfactory.pyd`, creates a
@@ -32,21 +30,30 @@ credential is inherited without being written into Codex configuration.
 
 ## Run The Test
 
-Record the tested revision:
+The installer prints a protected `Start-PowerFactoryCodex.ps1` command. Run it,
+then record the tested revision from the installed source:
 
 ```powershell
-git rev-parse HEAD
-codex
+git -C "$env:LOCALAPPDATA\PowerFactoryMCP\source" rev-parse HEAD
 ```
 
 In the new Codex thread:
 
-1. Call `get_session_status` and confirm all three tools are registered.
+1. Call `get_session_status` and save the registered tool list.
 2. Call `inspect_active_project` and confirm it reports the intended active
    project/study case plus bounded `ElmLod`, `ElmTerm`, and `ElmLne` inventory.
-3. Call `run_powerfactory_connectivity_probe` with `repeat: 2`. This executes
+3. Call `get_model_context`, then `list_components` for `terminal`, `line`,
+   `load`, and `transformer`. Save one returned product identity.
+4. Call `get_asset_context` with that identity.
+5. Call `refresh_model_graph`, `get_model_graph_summary`, and
+   `query_model_graph` with `query_kind: components` using the returned context
+   ID and extraction revision.
+6. Call `run_validated_load_flow` with a new idempotency key, then call
+   `get_calculation_run` with its run ID. Repeat the load flow with another key
+   and call `compare_results` using the two result snapshot IDs.
+7. Call `run_powerfactory_connectivity_probe` with `repeat: 2`. This executes
    the active study case's load flow as part of lifecycle verification.
-4. Confirm all calls came from the `powerfactory-agent` MCP server.
+8. Confirm all calls came from the `powerfactory-agent` MCP server.
 
 ## Return Evidence
 
@@ -55,7 +62,7 @@ Return:
 - the exact `git rev-parse HEAD` value
 - PowerFactory release/service pack and Python version
 - whether installation required any manual deviation
-- all three MCP responses
+- all MCP responses from the sequence above
 - any crash, hang, licence failure, stale process, or GUI interaction
 - `%LOCALAPPDATA%\PowerFactoryAgent\powerfactory-agent.log`
 - `%LOCALAPPDATA%\PowerFactoryAgent\evidence\connectivity-*.json`
@@ -75,9 +82,9 @@ feedback; it is not a simulated result.
 
 ## Current Surface
 
-The registered tools are `get_session_status`, `inspect_active_project`, and
-`run_powerfactory_connectivity_probe`. Inspection is read-only and stops before
-calculation. The connectivity probe executes a load flow but does not change
-model attributes. The graph persistence/query core is not registered because a
-real PowerFactory topology extractor and stable identity registry are not yet
-validated. No preview, approval, or mutation tool is exposed.
+The product exposes status, inspection, component identity/context, load-flow
+result persistence/comparison, and supported-class graph tools. The native
+runtime has no fake fallback. Graph responses report that switches (`ElmCoup`),
+three-winding transformers (`ElmTr3`), and explicit out-of-service-state
+coverage are not yet admitted, so path claims are disabled. No preview,
+approval, or mutation tool is exposed.

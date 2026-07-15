@@ -8,7 +8,7 @@ import sqlite3
 from typing import Iterator
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 _MIGRATION_1 = (
@@ -396,6 +396,73 @@ _MIGRATION_8 = (
 )
 
 
+# Product UUIDs are durable identities; locator rows are immutable evidence.
+# A locator signature is deliberately not globally unique because a proven
+# deletion followed by same-path recreation must produce a new product UUID.
+_MIGRATION_9 = (
+    """CREATE TABLE identity_products (
+    product_identity TEXT PRIMARY KEY,
+    installation_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    project_key TEXT NOT NULL,
+    object_class TEXT NOT NULL,
+    lifecycle_state TEXT NOT NULL,
+    current_locator_version_id TEXT NOT NULL,
+    first_evidence_reference TEXT NOT NULL,
+    last_evidence_reference TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)""",
+    """CREATE TABLE identity_locators (
+    locator_version_id TEXT PRIMARY KEY,
+    product_identity TEXT NOT NULL REFERENCES identity_products(product_identity),
+    locator_signature TEXT NOT NULL,
+    locator_json TEXT NOT NULL,
+    observed_at TEXT NOT NULL
+)""",
+    """CREATE TABLE identity_lifecycle_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_identity TEXT NOT NULL REFERENCES identity_products(product_identity),
+    lifecycle_state TEXT NOT NULL,
+    evidence_reference TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    event_json TEXT NOT NULL
+)""",
+    """CREATE TABLE identity_tombstones (
+    product_identity TEXT PRIMARY KEY REFERENCES identity_products(product_identity),
+    tombstone_json TEXT NOT NULL,
+    tombstoned_at TEXT NOT NULL
+)""",
+    "CREATE INDEX identity_locators_signature_idx ON identity_locators(locator_signature)",
+    "CREATE INDEX identity_products_scope_idx ON identity_products(installation_id, profile_id, project_key, object_class, lifecycle_state)",
+    "CREATE INDEX identity_lifecycle_events_product_idx ON identity_lifecycle_events(product_identity, sequence)",
+    """CREATE TRIGGER identity_locators_immutable_update
+    BEFORE UPDATE ON identity_locators BEGIN
+        SELECT RAISE(ABORT, 'identity locators are append-only');
+    END""",
+    """CREATE TRIGGER identity_locators_immutable_delete
+    BEFORE DELETE ON identity_locators BEGIN
+        SELECT RAISE(ABORT, 'identity locators are append-only');
+    END""",
+    """CREATE TRIGGER identity_lifecycle_events_immutable_update
+    BEFORE UPDATE ON identity_lifecycle_events BEGIN
+        SELECT RAISE(ABORT, 'identity lifecycle events are append-only');
+    END""",
+    """CREATE TRIGGER identity_lifecycle_events_immutable_delete
+    BEFORE DELETE ON identity_lifecycle_events BEGIN
+        SELECT RAISE(ABORT, 'identity lifecycle events are append-only');
+    END""",
+    """CREATE TRIGGER identity_tombstones_immutable_update
+    BEFORE UPDATE ON identity_tombstones BEGIN
+        SELECT RAISE(ABORT, 'identity tombstones are append-only');
+    END""",
+    """CREATE TRIGGER identity_tombstones_immutable_delete
+    BEFORE DELETE ON identity_tombstones BEGIN
+        SELECT RAISE(ABORT, 'identity tombstones are append-only');
+    END""",
+)
+
+
 class DatabaseVersionError(RuntimeError):
     """The database schema is newer than this process understands."""
 
@@ -491,6 +558,11 @@ class SQLiteDatabase:
                 for statement in _MIGRATION_8:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version = 8")
+                current = 8
+            if current < 9:
+                for statement in _MIGRATION_9:
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version = 9")
 
 
 __all__ = ["DatabaseVersionError", "SCHEMA_VERSION", "SQLiteDatabase"]

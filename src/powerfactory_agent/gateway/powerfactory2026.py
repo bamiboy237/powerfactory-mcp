@@ -55,6 +55,7 @@ from powerfactory_agent.gateway.errors import (
     ConfigurationMismatch,
     ConnectionFailure,
     CursorInvalid,
+    GatewayError,
     InvalidOperation,
     ObjectNotFound,
 )
@@ -186,6 +187,8 @@ class PowerFactoryGateway2026:
             raise InvalidOperation("requested PowerFactory release is unsupported")
         try:
             vendor_session = self._vendor.start(request)
+        except GatewayError:
+            raise
         except Exception:
             raise ConnectionFailure("PowerFactory 2026 vendor session could not start") from None
         self._start_request = request
@@ -206,6 +209,8 @@ class PowerFactoryGateway2026:
         session = self._require_started()
         try:
             vendor_context = self._vendor.inspect_context()
+        except GatewayError:
+            raise
         except Exception:
             raise ConnectionFailure("PowerFactory context inspection failed") from None
         context = self._context_from_vendor(session.session_id, vendor_context)
@@ -219,6 +224,8 @@ class PowerFactoryGateway2026:
         prior = self._context
         try:
             vendor_context = self._vendor.activate_context(request)
+        except GatewayError:
+            raise
         except Exception:
             raise ConnectionFailure("PowerFactory context activation failed") from None
         context = self._context_from_vendor(session.session_id, vendor_context)
@@ -249,6 +256,8 @@ class PowerFactoryGateway2026:
         offset = self._decode_cursor(request.cursor, "objects", binding)
         try:
             records = tuple(self._vendor.query_objects(request))
+        except GatewayError:
+            raise
         except Exception:
             raise ConnectionFailure("PowerFactory object query failed") from None
         self._assert_vendor_bound(records, "object query")
@@ -298,6 +307,8 @@ class PowerFactoryGateway2026:
             raise InvalidOperation("dependency request exceeds its declared result limit")
         try:
             records, complete = self._vendor.observe_dependencies(request)
+        except GatewayError:
+            raise
         except Exception:
             raise ConnectionFailure("PowerFactory dependency observation failed") from None
         records = tuple(records)
@@ -336,6 +347,8 @@ class PowerFactoryGateway2026:
         started_at = self._now()
         try:
             outcome = self._vendor.execute_command(request)
+        except GatewayError:
+            raise
         except Exception:
             raise ConnectionFailure("PowerFactory command execution failed") from None
         if isinstance(outcome.return_code, bool) or not isinstance(outcome.return_code, int):
@@ -377,6 +390,8 @@ class PowerFactoryGateway2026:
         offset = self._decode_cursor(request.cursor, "results", binding)
         try:
             records = tuple(self._vendor.collect_results(request))
+        except GatewayError:
+            raise
         except Exception:
             raise ConnectionFailure("PowerFactory result collection failed") from None
         self._assert_vendor_bound(records, "result collection")
@@ -403,6 +418,8 @@ class PowerFactoryGateway2026:
         offset = self._decode_cursor(request.cursor, "logs", binding)
         try:
             vendor_logs = tuple(self._vendor.read_logs())
+        except GatewayError:
+            raise
         except Exception:
             raise ConnectionFailure("PowerFactory log read failed") from None
         self._assert_vendor_bound(vendor_logs, "log read")

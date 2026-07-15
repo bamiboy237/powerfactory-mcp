@@ -20,6 +20,13 @@ from .calculation_store import (
     build_calculation_overlays,
 )
 from .model_graph_store import GraphContextMismatchError, GraphSnapshotNotFoundError, ModelGraphStore
+from .identity_store import (
+    IdentityAmbiguousError,
+    IdentityBinding,
+    IdentityConflictError,
+    IdentityNotFoundError,
+    IdentityStore,
+)
 from .lease_store import (
     ContextLeaseStore,
     LeaseBusyError,
