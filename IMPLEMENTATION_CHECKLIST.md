@@ -19,7 +19,7 @@ This file is only an execution index. Implementation details remain in [`PRODUCT
 | Frontier | Current position | Meaning |
 |---|---|---|
 | Acceptance | Item 5 / Buildout 0 | `BLOCKED — Windows validation required`; the prepared probe is not accepted evidence. |
-| Development | Buildout 2 owner integration, then Buildout 4 | The platform-independent owner/primitive boundary, provisional PowerFactory 2026 adapter, and Buildout 3 inventory are prepared. Next bind every adapter call to the durable owner, then build the persistent graph without enabling unvalidated live behavior. |
+| Development | Buildout 4 preparation | The platform-independent Buildout 2 owner/primitive boundary, provisional PowerFactory 2026 adapter, and Buildout 3 inventory are prepared. Next build the persistent graph without enabling unvalidated live behavior. |
 
 ## Preparation record
 
@@ -28,7 +28,7 @@ This file is only an execution index. Implementation details remain in [`PRODUCT
 | Buildout 0 | Lifecycle, capability, cleanup, and identity probes are implemented with portable contract tests and a Windows handoff. | `BLOCKED — Windows validation required`; item 5 remains unchecked. |
 | `DEP` and `ID` | Provisional `v0.1.0` specifications exist under `specs/architecture/` and separate deterministic requirements from Windows decision points. | Not accepted; Windows evidence must reconcile the open decision points before item 6 can be checked. |
 | Buildout 1 / `DOM` | Immutable typed contracts, canonical JSON/digests, strict defaults, structured errors, and the deterministic bounded headline workflow are implemented. The additive provisional domain schema is `0.3.0` after admitting inventory and primitive-gateway DTOs. | Prepared, not accepted. B0, `DEP`, and `ID` acceptance prerequisites remain unsatisfied; item 7 stays unchecked. |
-| Buildout 2 portable core | A durable SQLite operation store, bounded single-owner FIFO worker, separate queue/client/health deadlines, quarantine/reconciliation behavior, strict vendor-primitive protocol, deterministic primitive fake, and testable provisional `PowerFactoryGateway2026` adapter are implemented. The adapter uses an injected typed vendor seam, starts/closes idempotently, verifies context, bounds reads, separates commands/results, redacts logs, and disables writes. The older monolithic fake is explicitly retained only as `DeterministicHeadlineHarness` compatibility scaffolding. | Partially prepared, not accepted. Adapter calls are not yet composed through the durable owner; authenticated OS singleton/health path and all real lifecycle/concurrency evidence remain outstanding. Item 8 stays unchecked. |
+| Buildout 2 portable core | A durable SQLite operation store, bounded single-owner FIFO worker, typed `SerializedPowerFactoryOwner`, separate queue/client/health deadlines, quarantine/reconciliation behavior, strict vendor-primitive protocol, deterministic primitive fake, and testable provisional `PowerFactoryGateway2026` adapter are implemented. Every primitive is admitted through stable owner handlers with durable status and typed result recovery. The adapter uses an injected typed vendor seam, starts/closes idempotently, verifies context, bounds reads, separates commands/results, redacts logs, and disables writes. The older monolithic fake is explicitly retained only as `DeterministicHeadlineHarness` compatibility scaffolding. | Prepared locally, not accepted. Authenticated OS singleton/health path and all real lifecycle/concurrency evidence remain outstanding. Item 8 stays unchecked. |
 | Buildout 3 portable core | Snapshot-bound model summary, bounded component pages, exact asset lookup, deterministic counts, and structured unsupported/unresolved warnings are implemented over a narrow read-only gateway view. | Prepared locally, not accepted. Native identity, class mapping, unsupported-object, pagination, and fixture accuracy evidence remain outstanding; item 9 stays unchecked. |
 
 The headline harness's registered authorization, lock, counters, and direct-ledger behavior are test mechanisms only. They do not satisfy the future approval-authority, lease/fencing, durable workflow, persistence, or real mutation-strategy gates. The primitive fake's write path is disabled by default and exists only for guarded contract/failure tests.
@@ -36,6 +36,8 @@ The headline harness's registered authorization, lock, counters, and direct-ledg
 Foundation milestone verification on 2026-07-14: `uv run pytest -q` (`106 passed`, `230 subtests`), generated schema `--check`, `compileall`, `git diff --check`, and `graphify update .` all passed. This is local preparation evidence, not acceptance evidence for any Windows-dependent gate.
 
 Adapter milestone verification on 2026-07-14: `uv run pytest -q` (`113 passed`, `230 subtests`) and `graphify update .` passed. This is local preparation evidence, not acceptance evidence for any Windows-dependent gate.
+
+Owner-integration milestone verification on 2026-07-14: `uv run pytest -q` (`116 passed`, `230 subtests`) and `graphify update .` passed. This is local preparation evidence, not acceptance evidence for any Windows-dependent gate.
 
 ## Delivery sequence
 
