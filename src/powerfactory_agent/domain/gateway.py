@@ -80,6 +80,7 @@ class RelationshipKind(str, Enum):
 
 class ResultVariableKind(str, Enum):
     BUS_VOLTAGE = "bus_voltage"
+    EQUIPMENT_LOADING = "equipment_loading"
     ACTIVE_POWER = "active_power"
     BUS_CURRENT = "bus_current"
     ROTOR_ANGLE = "rotor_angle"

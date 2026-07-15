@@ -11,17 +11,17 @@ from pathlib import Path
 import types
 from typing import Union, get_args, get_origin, get_type_hints
 
-from . import gateway, inventory, models, topology, values
+from . import calculations, gateway, inventory, models, topology, values
 
 
-SCHEMA_VERSION = "0.4.0"
+SCHEMA_VERSION = "0.5.0"
 SCHEMA_ID = f"https://powerfactory-agent.local/schemas/domain/{SCHEMA_VERSION}/domain.schema.json"
 SCHEMA_PATH = Path("specs/schemas/domain/domain-v1.schema.json")
 
 
 def _public_contract_types() -> tuple[type[object], ...]:
     admitted: list[type[object]] = []
-    for module in (values, models, inventory, topology, gateway):
+    for module in (values, models, inventory, topology, gateway, calculations):
         for name in module.__all__ if hasattr(module, "__all__") else dir(module):
             candidate = getattr(module, name)
             if (

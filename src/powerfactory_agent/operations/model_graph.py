@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import networkx as nx
 
-from powerfactory_agent.domain import AssetReference
+from powerfactory_agent.domain import (
+    AssetReference,
+    CalculationOverlay,
+    CalculationOverlayKind,
+    ResultSnapshot,
+)
 from powerfactory_agent.domain.topology import (
     AreaZoneQuery,
     ComponentsQuery,
@@ -12,6 +17,7 @@ from powerfactory_agent.domain.topology import (
     GraphIncrementalRefresh,
     GraphQuery,
     GraphQueryResult,
+    GraphRelationshipKind,
     GraphSnapshot,
     ImpactQuery,
     NeighborhoodQuery,
@@ -22,6 +28,10 @@ from powerfactory_agent.persistence.model_graph_store import ModelGraphStore
 
 class GraphQueryError(LookupError):
     pass
+
+
+class CalculationOverlayBindingError(ValueError):
+    """Derived calculation data does not bind the requested graph extraction."""
 
 
 class PersistentModelGraph:
@@ -151,6 +161,63 @@ class PersistentModelGraph:
             )
         return graph
 
+    @classmethod
+    def projection_with_calculation_overlays(
+        cls,
+        snapshot: GraphSnapshot,
+        calculation_snapshot: ResultSnapshot,
+        overlays: tuple[CalculationOverlay, ...],
+    ) -> nx.MultiGraph:
+        """Return a disposable projection with verified result/violation overlay nodes.
+
+        This deliberately does not call a store write method.  The authoritative
+        graph extraction and calculation snapshot remain separate SQLite records.
+        """
+        cls._validate_calculation_overlay_binding(snapshot, calculation_snapshot, overlays)
+        graph = cls.projection(snapshot)
+        for overlay in overlays:
+            graph.add_node(overlay.overlay_id, calculation_overlay=overlay)
+            edge_kind = (
+                GraphRelationshipKind.HAS_RESULT
+                if overlay.overlay_kind is CalculationOverlayKind.RESULT
+                else GraphRelationshipKind.HAS_VIOLATION
+            )
+            graph.add_edge(
+                overlay.product_identity.value,
+                overlay.overlay_id,
+                key=f"{edge_kind.value}:{overlay.overlay_id}",
+                relationship_kind=edge_kind,
+                calculation_overlay=overlay,
+            )
+        return graph
+
+    @staticmethod
+    def _validate_calculation_overlay_binding(
+        graph_snapshot: GraphSnapshot,
+        calculation_snapshot: ResultSnapshot,
+        overlays: tuple[CalculationOverlay, ...],
+    ) -> None:
+        context = graph_snapshot.context
+        if (
+            context.model_context_id != calculation_snapshot.context_id
+            or context.configuration_key != calculation_snapshot.configuration_key
+            or context.extraction_revision != calculation_snapshot.extraction_revision
+        ):
+            raise CalculationOverlayBindingError(
+                "calculation snapshot does not match graph context, configuration, and extraction revision"
+            )
+        expected = tuple(
+            sorted(
+                _expected_calculation_overlays(calculation_snapshot),
+                key=lambda item: item.overlay_id,
+            )
+        )
+        if tuple(sorted(overlays, key=lambda item: item.overlay_id)) != expected:
+            raise CalculationOverlayBindingError("calculation overlays are not the exact derived snapshot projection")
+        graph_asset_ids = {asset.asset.product_identity.value for asset in graph_snapshot.assets}
+        if any(item.product_identity.value not in graph_asset_ids for item in overlays):
+            raise CalculationOverlayBindingError("calculation overlay references an asset absent from graph extraction")
+
     def _projection_for(self, query: GraphQuery) -> tuple[GraphSnapshot, nx.MultiGraph]:
         snapshot = self.store.revision(
             context_id=query.model_context_id,
@@ -198,7 +265,7 @@ class PersistentModelGraph:
         )
 
 
-__all__ = ["GraphQueryError", "PersistentModelGraph"]
+__all__ = ["CalculationOverlayBindingError", "GraphQueryError", "PersistentModelGraph"]
 
 
 def _energized_asset(graph_asset: object) -> bool:
@@ -207,3 +274,10 @@ def _energized_asset(graph_asset: object) -> bool:
         getattr(graph_asset, "in_service")
         and (not getattr(graph_asset, "is_switch") or getattr(graph_asset, "switch_closed"))
     )
+
+
+def _expected_calculation_overlays(snapshot: ResultSnapshot) -> tuple[CalculationOverlay, ...]:
+    # Local import keeps the graph layer independent from calculation persistence.
+    from powerfactory_agent.persistence.calculation_store import build_calculation_overlays
+
+    return build_calculation_overlays(snapshot)

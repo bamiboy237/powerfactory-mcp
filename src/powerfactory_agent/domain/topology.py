@@ -47,6 +47,8 @@ class GraphRelationshipKind(str, Enum):
     CONTAINS = "contains"
     MEMBER_OF = "member_of"
     TERMINAL_OF = "terminal_of"
+    HAS_RESULT = "has_result"
+    HAS_VIOLATION = "has_violation"
 
 
 class GraphQueryKind(str, Enum):

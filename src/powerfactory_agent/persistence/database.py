@@ -8,7 +8,7 @@ import sqlite3
 from typing import Iterator
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 _MIGRATION_1 = (
@@ -84,6 +84,53 @@ _MIGRATION_2 = (
 )
 
 
+# Calculation snapshots are immutable durable evidence.  Overlay rows are a
+# derived cache/projection and can always be rebuilt from snapshot JSON.
+_MIGRATION_3 = (
+    """CREATE TABLE calculation_runs (
+    run_id TEXT PRIMARY KEY,
+    context_id TEXT NOT NULL,
+    configuration_key TEXT NOT NULL,
+    extraction_counter INTEGER NOT NULL,
+    input_digest TEXT NOT NULL,
+    policy_name TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    convergence_state TEXT NOT NULL,
+    result_snapshot_id TEXT,
+    run_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+)""",
+    """CREATE TABLE calculation_snapshots (
+    snapshot_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE REFERENCES calculation_runs(run_id),
+    context_id TEXT NOT NULL,
+    configuration_key TEXT NOT NULL,
+    extraction_counter INTEGER NOT NULL,
+    input_digest TEXT NOT NULL,
+    policy_name TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+)""",
+    """CREATE TABLE calculation_comparisons (
+    comparison_id TEXT PRIMARY KEY,
+    baseline_snapshot_id TEXT NOT NULL REFERENCES calculation_snapshots(snapshot_id),
+    candidate_snapshot_id TEXT NOT NULL REFERENCES calculation_snapshots(snapshot_id),
+    comparison_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+)""",
+    """CREATE TABLE calculation_overlays (
+    overlay_id TEXT PRIMARY KEY,
+    snapshot_id TEXT NOT NULL REFERENCES calculation_snapshots(snapshot_id) ON DELETE CASCADE,
+    product_identity TEXT NOT NULL,
+    overlay_kind TEXT NOT NULL,
+    overlay_json TEXT NOT NULL
+)""",
+    "CREATE INDEX calculation_snapshots_context_idx ON calculation_snapshots(context_id, extraction_counter)",
+    "CREATE INDEX calculation_overlays_snapshot_idx ON calculation_overlays(snapshot_id, product_identity)",
+)
+
+
 class DatabaseVersionError(RuntimeError):
     """The database schema is newer than this process understands."""
 
@@ -149,6 +196,11 @@ class SQLiteDatabase:
                 for statement in _MIGRATION_2:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version = 2")
+                current = 2
+            if current < 3:
+                for statement in _MIGRATION_3:
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version = 3")
 
 
 __all__ = ["DatabaseVersionError", "SCHEMA_VERSION", "SQLiteDatabase"]

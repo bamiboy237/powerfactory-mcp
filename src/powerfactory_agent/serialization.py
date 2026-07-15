@@ -32,6 +32,7 @@ class SerializationError(ValueError):
 def _is_domain_dataclass(value: object) -> bool:
     return is_dataclass(value) and value.__class__.__module__ in {
         "powerfactory_agent.domain.gateway",
+        "powerfactory_agent.domain.calculations",
         "powerfactory_agent.domain.inventory",
         "powerfactory_agent.domain.topology",
         "powerfactory_agent.domain.models",
@@ -168,6 +169,7 @@ def _decode(annotation: object, value: object, path: str) -> object:
     if isinstance(annotation, type) and is_dataclass(annotation):
         if annotation.__module__ not in {
             "powerfactory_agent.domain.gateway",
+            "powerfactory_agent.domain.calculations",
             "powerfactory_agent.domain.inventory",
             "powerfactory_agent.domain.topology",
             "powerfactory_agent.domain.models",

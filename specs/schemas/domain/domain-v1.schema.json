@@ -499,6 +499,65 @@
       ],
       "type": "object"
     },
+    "CalculationComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_snapshot_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "candidate_snapshot_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "comparable_metric_count": {
+          "type": "integer"
+        },
+        "compared_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "comparison_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "comparisons": {
+          "items": {
+            "$ref": "#/$defs/MetricComparison"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/FindingComparison"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "policy": {
+          "$ref": "#/$defs/VersionedName"
+        },
+        "result_equivalent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "comparison_id",
+        "baseline_snapshot_id",
+        "candidate_snapshot_id",
+        "policy",
+        "result_equivalent",
+        "comparable_metric_count",
+        "comparisons",
+        "findings",
+        "compared_at"
+      ],
+      "type": "object"
+    },
     "CalculationInputDigest": {
       "additionalProperties": false,
       "properties": {
@@ -509,6 +568,178 @@
       },
       "required": [
         "value"
+      ],
+      "type": "object"
+    },
+    "CalculationOverlay": {
+      "additionalProperties": false,
+      "properties": {
+        "definition_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "overlay_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "overlay_kind": {
+          "$ref": "#/$defs/CalculationOverlayKind"
+        },
+        "policy": {
+          "$ref": "#/$defs/VersionedName"
+        },
+        "product_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        },
+        "run_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "snapshot_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "violation_key": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "overlay_id",
+        "overlay_kind",
+        "product_identity",
+        "run_id",
+        "snapshot_id",
+        "policy",
+        "definition_id",
+        "violation_key"
+      ],
+      "type": "object"
+    },
+    "CalculationOverlayKind": {
+      "enum": [
+        "result",
+        "violation"
+      ],
+      "type": "string"
+    },
+    "CalculationRun": {
+      "additionalProperties": false,
+      "properties": {
+        "calculation_input_digest": {
+          "$ref": "#/$defs/CalculationInputDigest"
+        },
+        "command": {
+          "$ref": "#/$defs/CommandSelector"
+        },
+        "command_settings": {
+          "items": {
+            "$ref": "#/$defs/CommandSetting"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "completed_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "configuration_key": {
+          "$ref": "#/$defs/ConfigurationKey"
+        },
+        "context_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "convergence_state": {
+          "$ref": "#/$defs/ConvergenceState"
+        },
+        "diagnostic_messages": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "execution_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extraction_revision": {
+          "$ref": "#/$defs/ExtractionRevision"
+        },
+        "log_references": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "policy": {
+          "$ref": "#/$defs/VersionedName"
+        },
+        "result_snapshot_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "started_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "context_id",
+        "configuration_key",
+        "extraction_revision",
+        "calculation_input_digest",
+        "command",
+        "command_settings",
+        "policy",
+        "convergence_state",
+        "execution_id",
+        "diagnostic_messages",
+        "log_references",
+        "result_snapshot_id",
+        "started_at",
+        "completed_at"
       ],
       "type": "object"
     },
@@ -1315,6 +1546,15 @@
       ],
       "type": "object"
     },
+    "EvaluationStatus": {
+      "enum": [
+        "safe",
+        "violation",
+        "not_evaluated_missing_limit",
+        "not_evaluated_data"
+      ],
+      "type": "string"
+    },
     "ExecutionAuthorization": {
       "additionalProperties": false,
       "properties": {
@@ -1468,6 +1708,41 @@
       "enum": [
         "unsupported_object_class",
         "unresolved_identity"
+      ],
+      "type": "string"
+    },
+    "FindingComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_status": {
+          "$ref": "#/$defs/EvaluationStatus"
+        },
+        "candidate_status": {
+          "$ref": "#/$defs/EvaluationStatus"
+        },
+        "trend": {
+          "$ref": "#/$defs/FindingTrend"
+        },
+        "violation_key": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "violation_key",
+        "trend",
+        "baseline_status",
+        "candidate_status"
+      ],
+      "type": "object"
+    },
+    "FindingTrend": {
+      "enum": [
+        "new",
+        "resolved",
+        "unchanged",
+        "not_evaluated"
       ],
       "type": "string"
     },
@@ -1848,7 +2123,9 @@
         "connects",
         "contains",
         "member_of",
-        "terminal_of"
+        "terminal_of",
+        "has_result",
+        "has_violation"
       ],
       "type": "string"
     },
@@ -2126,6 +2403,58 @@
       },
       "required": [
         "value"
+      ],
+      "type": "object"
+    },
+    "LoadFlowRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/CommandSelector"
+        },
+        "command_settings": {
+          "items": {
+            "$ref": "#/$defs/CommandSetting"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "configuration_key": {
+          "$ref": "#/$defs/ConfigurationKey"
+        },
+        "context_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "extraction_revision": {
+          "$ref": "#/$defs/ExtractionRevision"
+        },
+        "idempotency_key": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "metric_catalog": {
+          "items": {
+            "$ref": "#/$defs/MetricDefinition"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "policy": {
+          "$ref": "#/$defs/VersionedName"
+        }
+      },
+      "required": [
+        "context_id",
+        "configuration_key",
+        "extraction_revision",
+        "command",
+        "command_settings",
+        "metric_catalog",
+        "policy",
+        "idempotency_key"
       ],
       "type": "object"
     },
@@ -2420,6 +2749,145 @@
       ],
       "type": "string"
     },
+    "MetricComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "after_status": {
+          "$ref": "#/$defs/ResultCellStatus"
+        },
+        "after_value": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "before_status": {
+          "$ref": "#/$defs/ResultCellStatus"
+        },
+        "before_value": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "definition_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "delta": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "equivalent": {
+          "type": "boolean"
+        },
+        "material": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "definition_id",
+        "before_status",
+        "after_status",
+        "before_value",
+        "after_value",
+        "delta",
+        "equivalent",
+        "material"
+      ],
+      "type": "object"
+    },
+    "MetricDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        },
+        "canonical_unit": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "critical_margin": {
+          "$ref": "#/$defs/Quantity"
+        },
+        "definition_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "equivalence_tolerance": {
+          "$ref": "#/$defs/Quantity"
+        },
+        "limit_source": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "lower_limit": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "materiality_threshold": {
+          "$ref": "#/$defs/Quantity"
+        },
+        "metric_kind": {
+          "$ref": "#/$defs/MetricKind"
+        },
+        "object_selector": {
+          "$ref": "#/$defs/PrimitiveObjectSelector"
+        },
+        "upper_limit": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "variable": {
+          "$ref": "#/$defs/ResultVariableSelector"
+        }
+      },
+      "required": [
+        "definition_id",
+        "asset_identity",
+        "metric_kind",
+        "object_selector",
+        "variable",
+        "canonical_unit",
+        "lower_limit",
+        "upper_limit",
+        "critical_margin",
+        "equivalence_tolerance",
+        "materiality_threshold",
+        "limit_source"
+      ],
+      "type": "object"
+    },
     "MetricDelta": {
       "additionalProperties": false,
       "properties": {
@@ -2449,6 +2917,59 @@
         "delta"
       ],
       "type": "object"
+    },
+    "MetricEvaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "definition_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "observed_status": {
+          "$ref": "#/$defs/ResultCellStatus"
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/EvaluationStatus"
+        },
+        "violation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PolicyViolation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "definition_id",
+        "status",
+        "observed_status",
+        "violation",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "MetricKind": {
+      "enum": [
+        "bus_voltage",
+        "equipment_loading"
+      ],
+      "type": "string"
     },
     "ModelContext": {
       "additionalProperties": false,
@@ -2864,6 +3385,52 @@
       },
       "required": [
         "token"
+      ],
+      "type": "object"
+    },
+    "PolicyViolation": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        },
+        "definition_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "direction": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "$ref": "#/$defs/Quantity"
+        },
+        "measured_value": {
+          "$ref": "#/$defs/Quantity"
+        },
+        "metric_kind": {
+          "$ref": "#/$defs/MetricKind"
+        },
+        "severity": {
+          "$ref": "#/$defs/ViolationSeverity"
+        },
+        "violation_key": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "violation_key",
+        "definition_id",
+        "asset_identity",
+        "metric_kind",
+        "measured_value",
+        "limit",
+        "severity",
+        "direction"
       ],
       "type": "object"
     },
@@ -3458,6 +4025,72 @@
       ],
       "type": "object"
     },
+    "ResultMetric": {
+      "additionalProperties": false,
+      "properties": {
+        "definition": {
+          "$ref": "#/$defs/MetricDefinition"
+        },
+        "diagnostic": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "normalized": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_unit": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_value": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ResultCellStatus"
+        }
+      },
+      "required": [
+        "definition",
+        "status",
+        "source_value",
+        "source_unit",
+        "normalized",
+        "diagnostic"
+      ],
+      "type": "object"
+    },
     "ResultRow": {
       "additionalProperties": false,
       "properties": {
@@ -3478,9 +4111,73 @@
       ],
       "type": "object"
     },
+    "ResultSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "calculation_input_digest": {
+          "$ref": "#/$defs/CalculationInputDigest"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "configuration_key": {
+          "$ref": "#/$defs/ConfigurationKey"
+        },
+        "context_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "evaluations": {
+          "items": {
+            "$ref": "#/$defs/MetricEvaluation"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "extraction_revision": {
+          "$ref": "#/$defs/ExtractionRevision"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/ResultMetric"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "policy": {
+          "$ref": "#/$defs/VersionedName"
+        },
+        "run_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "snapshot_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "run_id",
+        "context_id",
+        "configuration_key",
+        "extraction_revision",
+        "calculation_input_digest",
+        "policy",
+        "metrics",
+        "evaluations",
+        "captured_at"
+      ],
+      "type": "object"
+    },
     "ResultVariableKind": {
       "enum": [
         "bus_voltage",
+        "equipment_loading",
         "active_power",
         "bus_current",
         "rotor_angle"
@@ -3991,8 +4688,8 @@
       "type": "object"
     }
   },
-  "$id": "https://powerfactory-agent.local/schemas/domain/0.4.0/domain.schema.json",
+  "$id": "https://powerfactory-agent.local/schemas/domain/0.5.0/domain.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PowerFactory Agent Domain Contracts",
-  "x-schema-version": "0.4.0"
+  "x-schema-version": "0.5.0"
 }

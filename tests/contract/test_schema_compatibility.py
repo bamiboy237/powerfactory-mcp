@@ -36,7 +36,7 @@ class DomainSchemaCompatibilityTests(unittest.TestCase):
 
     def test_schema_is_versioned_closed_and_covers_all_public_contract_types(self) -> None:
         schema = generate_domain_schema()
-        self.assertEqual("0.4.0", schema["x-schema-version"])
+        self.assertEqual("0.5.0", schema["x-schema-version"])
         definitions = schema["$defs"]
         self.assertEqual({item.__name__ for item in DOMAIN_TYPES}, set(definitions))
         for name, definition in definitions.items():

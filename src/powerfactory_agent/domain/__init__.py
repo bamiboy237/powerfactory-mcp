@@ -61,6 +61,7 @@ from .inventory import (
     ModelSummary,
     ModelSummaryRequest,
 )
+from .calculations import *
 from .topology import (
     AreaZoneQuery,
     ComponentsQuery,

@@ -118,6 +118,7 @@ class DeterministicPrimitiveGateway:
         self.load_flow_command = CommandSelector(CommandKind.LOAD_FLOW, _COMMAND_CONTRACT)
         self.rms_command = CommandSelector(CommandKind.RMS_SIMULATION, _COMMAND_CONTRACT)
         self.bus_voltage_result = ResultVariableSelector(ResultVariableKind.BUS_VOLTAGE, _RESULT_CONTRACT)
+        self.equipment_loading_result = ResultVariableSelector(ResultVariableKind.EQUIPMENT_LOADING, _RESULT_CONTRACT)
         self.active_power_result = ResultVariableSelector(ResultVariableKind.ACTIVE_POWER, _RESULT_CONTRACT)
         self.bus_current_result = ResultVariableSelector(ResultVariableKind.BUS_CURRENT, _RESULT_CONTRACT)
         self.rotor_angle_result = ResultVariableSelector(ResultVariableKind.ROTOR_ANGLE, _RESULT_CONTRACT)
@@ -150,6 +151,7 @@ class DeterministicPrimitiveGateway:
                 self.bus_current_result: ("nan", "A", None),
             },
             self.load: {
+                self.equipment_loading_result: ("75.000000", "%", _quantity("75", "%")),
                 self.active_power_result: ("10.000000", "MW", _quantity("10", "MW")),
             },
         }
