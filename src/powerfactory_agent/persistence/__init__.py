@@ -15,6 +15,14 @@ from .calculation_store import (
     build_calculation_overlays,
 )
 from .model_graph_store import GraphContextMismatchError, GraphSnapshotNotFoundError, ModelGraphStore
+from .lease_store import (
+    ContextLeaseStore,
+    LeaseBusyError,
+    LeaseFenceRejectedError,
+    LeaseNotFoundError,
+    LeaseStateConflictError,
+    LeaseWorkflowVersionConflictError,
+)
 from .operation_store import (
     IdempotencyConflictError,
     InvalidOperationTransitionError,

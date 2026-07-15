@@ -63,6 +63,7 @@ from .inventory import (
 )
 from .calculations import *
 from .approval import *
+from .lease import ContextLease, LeaseEvent, LeaseEventType, LeaseMode, LeaseState
 from .workflow import (
     AuditActorClass,
     AuditEvent,

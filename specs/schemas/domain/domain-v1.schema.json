@@ -1635,6 +1635,92 @@
       ],
       "type": "object"
     },
+    "ContextLease": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration_key": {
+          "$ref": "#/$defs/ConfigurationKey"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "fencing_token": {
+          "type": "integer"
+        },
+        "issued_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "lease_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/LeaseMode"
+        },
+        "operation_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "owner_instance_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "recovery_disposition": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "service_scope_digest": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "state": {
+          "$ref": "#/$defs/LeaseState"
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        }
+      },
+      "required": [
+        "lease_id",
+        "service_scope_digest",
+        "configuration_key",
+        "workflow_id",
+        "workflow_version",
+        "fencing_token",
+        "mode",
+        "state",
+        "issued_at",
+        "expires_at",
+        "owner_instance_id",
+        "operation_id",
+        "recovery_disposition"
+      ],
+      "type": "object"
+    },
     "ContextObservation": {
       "additionalProperties": false,
       "properties": {
@@ -2865,6 +2951,153 @@
         "sort_specification"
       ],
       "type": "object"
+    },
+    "LeaseEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configuration_key": {
+          "$ref": "#/$defs/ConfigurationKey"
+        },
+        "correlation_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "event_type": {
+          "$ref": "#/$defs/LeaseEventType"
+        },
+        "evidence_reference": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "fencing_token": {
+          "type": "integer"
+        },
+        "lease_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "operation_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "service_scope_digest": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "state_after": {
+          "$ref": "#/$defs/LeaseState"
+        },
+        "state_before": {
+          "$ref": "#/$defs/LeaseState"
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        }
+      },
+      "required": [
+        "event_id",
+        "lease_id",
+        "service_scope_digest",
+        "configuration_key",
+        "workflow_id",
+        "workflow_version",
+        "fencing_token",
+        "event_type",
+        "occurred_at",
+        "state_before",
+        "state_after",
+        "reason",
+        "evidence_reference",
+        "command_id",
+        "operation_id",
+        "correlation_id"
+      ],
+      "type": "object"
+    },
+    "LeaseEventType": {
+      "enum": [
+        "acquire_attempted",
+        "acquired",
+        "released_for_authorization",
+        "released",
+        "expired",
+        "stale_fence_rejected",
+        "atomic_call_started",
+        "atomic_call_finished",
+        "recovery_admitted",
+        "quarantined",
+        "operator_recovered"
+      ],
+      "type": "string"
+    },
+    "LeaseMode": {
+      "enum": [
+        "preview",
+        "execution",
+        "rollback"
+      ],
+      "type": "string"
+    },
+    "LeaseState": {
+      "enum": [
+        "available",
+        "held_preview",
+        "held_execution",
+        "held_rollback",
+        "expired",
+        "in_flight_expired",
+        "reconciliation_required",
+        "quarantined"
+      ],
+      "type": "string"
     },
     "LiveStateFingerprint": {
       "additionalProperties": false,
@@ -5280,8 +5513,8 @@
       "type": "object"
     }
   },
-  "$id": "https://powerfactory-agent.local/schemas/domain/0.7.0/domain.schema.json",
+  "$id": "https://powerfactory-agent.local/schemas/domain/0.8.0/domain.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PowerFactory Agent Domain Contracts",
-  "x-schema-version": "0.7.0"
+  "x-schema-version": "0.8.0"
 }

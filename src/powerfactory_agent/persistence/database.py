@@ -8,7 +8,7 @@ import sqlite3
 from typing import Iterator
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 _MIGRATION_1 = (
@@ -252,6 +252,60 @@ _MIGRATION_5 = (
 )
 
 
+# A scope's fencing counter deliberately survives lease release.  The current
+# lease table holds both live and recovery states; AVAILABLE is represented by
+# deleting the current row, never by resetting its counter.
+_MIGRATION_6 = (
+    """CREATE TABLE context_lease_fence_counters (
+    service_scope_digest TEXT NOT NULL,
+    configuration_key TEXT NOT NULL,
+    last_fencing_token INTEGER NOT NULL,
+    PRIMARY KEY(service_scope_digest, configuration_key)
+)""",
+    """CREATE TABLE context_leases (
+    service_scope_digest TEXT NOT NULL,
+    configuration_key TEXT NOT NULL,
+    lease_id TEXT NOT NULL UNIQUE,
+    workflow_id TEXT NOT NULL REFERENCES workflow_records(workflow_id),
+    workflow_version_counter INTEGER NOT NULL,
+    fencing_token INTEGER NOT NULL,
+    mode TEXT NOT NULL,
+    state TEXT NOT NULL,
+    issued_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    owner_instance_id TEXT NOT NULL,
+    operation_id TEXT,
+    recovery_disposition TEXT,
+    lease_json TEXT NOT NULL,
+    PRIMARY KEY(service_scope_digest, configuration_key)
+)""",
+    """CREATE TABLE context_lease_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    lease_id TEXT NOT NULL,
+    service_scope_digest TEXT NOT NULL,
+    configuration_key TEXT NOT NULL,
+    workflow_id TEXT NOT NULL,
+    workflow_version_counter INTEGER NOT NULL,
+    fencing_token INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    event_json TEXT NOT NULL
+)""",
+    "CREATE INDEX context_leases_workflow_idx ON context_leases(workflow_id)",
+    "CREATE INDEX context_lease_events_scope_idx ON context_lease_events(service_scope_digest, configuration_key, sequence)",
+    "CREATE INDEX context_lease_events_lease_idx ON context_lease_events(lease_id, sequence)",
+    """CREATE TRIGGER context_lease_events_immutable_update
+    BEFORE UPDATE ON context_lease_events BEGIN
+        SELECT RAISE(ABORT, 'context lease events are append-only');
+    END""",
+    """CREATE TRIGGER context_lease_events_immutable_delete
+    BEFORE DELETE ON context_lease_events BEGIN
+        SELECT RAISE(ABORT, 'context lease events are append-only');
+    END""",
+)
+
+
 class DatabaseVersionError(RuntimeError):
     """The database schema is newer than this process understands."""
 
@@ -332,6 +386,11 @@ class SQLiteDatabase:
                 for statement in _MIGRATION_5:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version = 5")
+                current = 5
+            if current < 6:
+                for statement in _MIGRATION_6:
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version = 6")
 
 
 __all__ = ["DatabaseVersionError", "SCHEMA_VERSION", "SQLiteDatabase"]
