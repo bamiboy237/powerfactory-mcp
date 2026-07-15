@@ -1,4 +1,4 @@
-"""Real, read-only connectivity probing shared by the CLI and MCP transport."""
+"""Real lifecycle probing, including load flow, shared by CLI and MCP."""
 
 from __future__ import annotations
 

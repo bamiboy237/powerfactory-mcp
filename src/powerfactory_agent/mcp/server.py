@@ -46,8 +46,8 @@ def create_server(installation: McpInstallation) -> FastMCP:
     server = FastMCP(
         "powerfactory-agent",
         instructions=(
-            "Safe PowerFactory MCP service. Use setup/status and the read-only "
-            "connectivity probe only. No model mutation tools are registered."
+            "Safe PowerFactory MCP service. Inspect the already-active project, "
+            "or run the connectivity probe. No model mutation tools are registered."
         ),
         host=installation.host,
         port=installation.port,
@@ -65,15 +65,29 @@ def create_server(installation: McpInstallation) -> FastMCP:
             "transport": "streamable-http",
             "endpoint": installation.endpoint_url,
             "powerfactory_probe_configured": installation.probe_config_file is not None,
-            "registered_tools": ["get_session_status", "run_powerfactory_connectivity_probe"],
+            "registered_tools": [
+                "get_session_status",
+                "inspect_active_project",
+                "run_powerfactory_connectivity_probe",
+            ],
             "mutation_tools_registered": False,
         }
         logger.info("mcp.get_session_status")
         return payload
 
     @server.tool()
+    def inspect_active_project() -> dict[str, object]:
+        """Inspect bounded component counts and samples in the already-active context."""
+
+        from .inspection import run_active_project_inspection
+
+        payload = run_active_project_inspection(installation)
+        logger.info("mcp.inspect_active_project status=%s", payload["status"].lower())
+        return payload
+
+    @server.tool()
     def run_powerfactory_connectivity_probe(repeat: int = 2) -> dict[str, object]:
-        """Run the real read-only PowerFactory lifecycle probe and return sanitized evidence."""
+        """Verify the real lifecycle, including load flow, and return sanitized evidence."""
 
         from .probe import run_connectivity_probe
 
