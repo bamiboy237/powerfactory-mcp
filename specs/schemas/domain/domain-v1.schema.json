@@ -106,6 +106,42 @@
       ],
       "type": "object"
     },
+    "AreaZoneQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "area_identity": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ProductIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "query": {
+          "$ref": "#/$defs/GraphQuery"
+        },
+        "zone_key": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "query",
+        "area_identity",
+        "zone_key"
+      ],
+      "type": "object"
+    },
     "AssetKind": {
       "enum": [
         "area",
@@ -857,6 +893,18 @@
       ],
       "type": "object"
     },
+    "ComponentsQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "$ref": "#/$defs/GraphQuery"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
     "ConfigurationKey": {
       "additionalProperties": false,
       "properties": {
@@ -1216,6 +1264,26 @@
       ],
       "type": "object"
     },
+    "ElectricalPathQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "$ref": "#/$defs/GraphQuery"
+        },
+        "source_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        },
+        "target_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        }
+      },
+      "required": [
+        "query",
+        "source_identity",
+        "target_identity"
+      ],
+      "type": "object"
+    },
     "EngineeringOperation": {
       "additionalProperties": false,
       "properties": {
@@ -1322,6 +1390,30 @@
         "expires_at",
         "agent_identity",
         "client_identity"
+      ],
+      "type": "object"
+    },
+    "ExtractionProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/GraphDataOrigin"
+        },
+        "source": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "detail",
+        "origin"
       ],
       "type": "object"
     },
@@ -1477,6 +1569,343 @@
       ],
       "type": "string"
     },
+    "GraphAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "area_identity": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ProductIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "asset": {
+          "$ref": "#/$defs/AssetReference"
+        },
+        "in_service": {
+          "type": "boolean"
+        },
+        "is_switch": {
+          "type": "boolean"
+        },
+        "switch_closed": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transformer_winding_count": {
+          "type": "integer"
+        },
+        "zone_key": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "asset",
+        "area_identity",
+        "zone_key",
+        "in_service",
+        "is_switch",
+        "switch_closed",
+        "transformer_winding_count"
+      ],
+      "type": "object"
+    },
+    "GraphAttribute": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        },
+        "name": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/GraphDataOrigin"
+        },
+        "value": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_identity",
+        "name",
+        "value",
+        "origin"
+      ],
+      "type": "object"
+    },
+    "GraphDataOrigin": {
+      "enum": [
+        "extracted",
+        "derived",
+        "inferred"
+      ],
+      "type": "string"
+    },
+    "GraphIncrementalRefresh": {
+      "additionalProperties": false,
+      "properties": {
+        "changed_assets": {
+          "items": {
+            "$ref": "#/$defs/GraphAsset"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "changed_attributes": {
+          "items": {
+            "$ref": "#/$defs/GraphAttribute"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "changed_relationships": {
+          "items": {
+            "$ref": "#/$defs/GraphRelationship"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "context": {
+          "$ref": "#/$defs/ModelContext"
+        },
+        "extraction_fingerprint": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/ExtractionProvenance"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "removed_relationship_ids": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "run_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "context",
+        "extraction_fingerprint",
+        "changed_assets",
+        "changed_attributes",
+        "changed_relationships",
+        "removed_relationship_ids",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "GraphQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "extraction_revision": {
+          "$ref": "#/$defs/ExtractionRevision"
+        },
+        "kind": {
+          "$ref": "#/$defs/GraphQueryKind"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "model_context_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "model_context_id",
+        "extraction_revision",
+        "limit"
+      ],
+      "type": "object"
+    },
+    "GraphQueryKind": {
+      "enum": [
+        "neighborhood",
+        "electrical_path",
+        "area_or_zone",
+        "components",
+        "impact",
+        "topology_diff"
+      ],
+      "type": "string"
+    },
+    "GraphQueryResult": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_references": {
+          "items": {
+            "$ref": "#/$defs/AssetReference"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "query": {
+          "$ref": "#/$defs/GraphQuery"
+        },
+        "relationship_ids": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "summary": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "total_matches": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "query",
+        "asset_references",
+        "relationship_ids",
+        "total_matches",
+        "truncated",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "GraphRelationship": {
+      "additionalProperties": false,
+      "properties": {
+        "in_service": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/GraphRelationshipKind"
+        },
+        "origin": {
+          "$ref": "#/$defs/GraphDataOrigin"
+        },
+        "relationship_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        },
+        "target_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        }
+      },
+      "required": [
+        "relationship_id",
+        "source_identity",
+        "target_identity",
+        "kind",
+        "origin",
+        "in_service"
+      ],
+      "type": "object"
+    },
+    "GraphRelationshipKind": {
+      "enum": [
+        "connects",
+        "contains",
+        "member_of",
+        "terminal_of"
+      ],
+      "type": "string"
+    },
+    "GraphSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "assets": {
+          "items": {
+            "$ref": "#/$defs/GraphAsset"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "attributes": {
+          "items": {
+            "$ref": "#/$defs/GraphAttribute"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "context": {
+          "$ref": "#/$defs/ModelContext"
+        },
+        "extraction_fingerprint": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/ExtractionProvenance"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "relationships": {
+          "items": {
+            "$ref": "#/$defs/GraphRelationship"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "run_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "context",
+        "extraction_fingerprint",
+        "assets",
+        "attributes",
+        "relationships",
+        "provenance"
+      ],
+      "type": "object"
+    },
     "IdentityLifecycleRecord": {
       "additionalProperties": false,
       "properties": {
@@ -1540,6 +1969,26 @@
         "reason",
         "tombstoned_at",
         "complete_absence_evidence"
+      ],
+      "type": "object"
+    },
+    "ImpactQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "changed_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        },
+        "hops": {
+          "type": "integer"
+        },
+        "query": {
+          "$ref": "#/$defs/GraphQuery"
+        }
+      },
+      "required": [
+        "query",
+        "changed_identity",
+        "hops"
       ],
       "type": "object"
     },
@@ -2172,6 +2621,26 @@
       "required": [
         "name",
         "value"
+      ],
+      "type": "object"
+    },
+    "NeighborhoodQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "center_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        },
+        "hops": {
+          "type": "integer"
+        },
+        "query": {
+          "$ref": "#/$defs/GraphQuery"
+        }
+      },
+      "required": [
+        "query",
+        "center_identity",
+        "hops"
       ],
       "type": "object"
     },
@@ -3320,6 +3789,22 @@
       ],
       "type": "object"
     },
+    "TopologyDiffQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "previous_revision": {
+          "$ref": "#/$defs/ExtractionRevision"
+        },
+        "query": {
+          "$ref": "#/$defs/GraphQuery"
+        }
+      },
+      "required": [
+        "query",
+        "previous_revision"
+      ],
+      "type": "object"
+    },
     "VariantStageObservation": {
       "additionalProperties": false,
       "properties": {
@@ -3506,8 +3991,8 @@
       "type": "object"
     }
   },
-  "$id": "https://powerfactory-agent.local/schemas/domain/0.3.0/domain.schema.json",
+  "$id": "https://powerfactory-agent.local/schemas/domain/0.4.0/domain.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PowerFactory Agent Domain Contracts",
-  "x-schema-version": "0.3.0"
+  "x-schema-version": "0.4.0"
 }

@@ -1,6 +1,7 @@
 """Platform-independent persistence primitives."""
 
 from .database import DatabaseVersionError, SCHEMA_VERSION, SQLiteDatabase
+from .model_graph_store import GraphContextMismatchError, GraphSnapshotNotFoundError, ModelGraphStore
 from .operation_store import (
     IdempotencyConflictError,
     InvalidOperationTransitionError,

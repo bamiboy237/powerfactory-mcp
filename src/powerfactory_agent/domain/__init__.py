@@ -61,6 +61,25 @@ from .inventory import (
     ModelSummary,
     ModelSummaryRequest,
 )
+from .topology import (
+    AreaZoneQuery,
+    ComponentsQuery,
+    ElectricalPathQuery,
+    ExtractionProvenance,
+    GraphAsset,
+    GraphAttribute,
+    GraphDataOrigin,
+    GraphIncrementalRefresh,
+    GraphQuery,
+    GraphQueryKind,
+    GraphQueryResult,
+    GraphRelationship,
+    GraphRelationshipKind,
+    GraphSnapshot,
+    ImpactQuery,
+    NeighborhoodQuery,
+    TopologyDiffQuery,
+)
 
 from .models import (
     AppliedChange,

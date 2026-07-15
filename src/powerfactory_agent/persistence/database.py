@@ -8,7 +8,7 @@ import sqlite3
 from typing import Iterator
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 _MIGRATION_1 = (
@@ -31,6 +31,56 @@ _MIGRATION_1 = (
 )""",
     """CREATE INDEX operation_records_state_sequence_idx
     ON operation_records(state, sequence)""",
+)
+
+
+# The model graph remains normalized in SQLite.  NetworkX is deliberately a
+# disposable projection, never a second source of truth.
+_MIGRATION_2 = (
+    """CREATE TABLE graph_contexts (
+    model_context_id TEXT PRIMARY KEY,
+    configuration_key TEXT NOT NULL,
+    extraction_counter INTEGER NOT NULL,
+    context_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+)""",
+    """CREATE TABLE graph_extraction_runs (
+    run_id TEXT PRIMARY KEY,
+    model_context_id TEXT NOT NULL REFERENCES graph_contexts(model_context_id),
+    extraction_counter INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    UNIQUE(model_context_id, extraction_counter)
+)""",
+    """CREATE TABLE graph_assets (
+    run_id TEXT NOT NULL REFERENCES graph_extraction_runs(run_id) ON DELETE CASCADE,
+    product_identity TEXT NOT NULL,
+    asset_json TEXT NOT NULL,
+    PRIMARY KEY(run_id, product_identity)
+)""",
+    """CREATE TABLE graph_attributes (
+    run_id TEXT NOT NULL REFERENCES graph_extraction_runs(run_id) ON DELETE CASCADE,
+    product_identity TEXT NOT NULL,
+    attribute_name TEXT NOT NULL,
+    attribute_json TEXT NOT NULL,
+    PRIMARY KEY(run_id, product_identity, attribute_name)
+)""",
+    """CREATE TABLE graph_relationships (
+    run_id TEXT NOT NULL REFERENCES graph_extraction_runs(run_id) ON DELETE CASCADE,
+    relationship_id TEXT NOT NULL,
+    relationship_json TEXT NOT NULL,
+    PRIMARY KEY(run_id, relationship_id)
+)""",
+    """CREATE TABLE graph_provenance (
+    run_id TEXT NOT NULL REFERENCES graph_extraction_runs(run_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL,
+    provenance_json TEXT NOT NULL,
+    PRIMARY KEY(run_id, sequence)
+)""",
+    "CREATE INDEX graph_extraction_runs_latest_idx ON graph_extraction_runs(recorded_at DESC)",
+    "CREATE INDEX graph_assets_identity_idx ON graph_assets(product_identity)",
 )
 
 
@@ -93,7 +143,12 @@ class SQLiteDatabase:
             if current < 1:
                 for statement in _MIGRATION_1:
                     connection.execute(statement)
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                connection.execute("PRAGMA user_version = 1")
+                current = 1
+            if current < 2:
+                for statement in _MIGRATION_2:
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version = 2")
 
 
 __all__ = ["DatabaseVersionError", "SCHEMA_VERSION", "SQLiteDatabase"]
