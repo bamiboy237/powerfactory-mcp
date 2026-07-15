@@ -10,6 +10,7 @@ import sys
 import uvicorn
 
 from .configuration import configure_probe, create_installation, load_installation
+from .probe import run_connectivity_probe
 from .server import build_asgi_app
 
 
@@ -34,6 +35,10 @@ def main() -> None:
 
     serve_parser = commands.add_parser("serve", help="start authenticated Streamable HTTP MCP service")
     serve_parser.add_argument("--config", type=Path, required=True)
+
+    probe_parser = commands.add_parser("probe", help="run the configured real PowerFactory lifecycle probe")
+    probe_parser.add_argument("--config", type=Path, required=True)
+    probe_parser.add_argument("--repeat", type=int, default=2)
 
     show_parser = commands.add_parser("show-install", help="print endpoint and Codex registration command")
     show_parser.add_argument("--config", type=Path, required=True)
@@ -66,6 +71,12 @@ def main() -> None:
             "codex mcp add powerfactory-agent --url "
             f"{installation.endpoint_url} --bearer-token-env-var {token_env}"
         )
+        return
+    if arguments.command == "probe":
+        payload = run_connectivity_probe(installation, arguments.repeat)
+        print(json.dumps(payload, sort_keys=True))
+        if payload["probe_status"] != "PASS":
+            raise SystemExit(1)
         return
     if arguments.command == "serve":
         uvicorn.run(build_asgi_app(installation), host=installation.host, port=installation.port)

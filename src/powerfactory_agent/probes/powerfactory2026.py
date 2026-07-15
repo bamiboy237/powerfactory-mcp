@@ -25,6 +25,7 @@ from .lifecycle import LifecycleStage
 
 
 _UNVALIDATED = "UNVALIDATED - Windows PowerFactory 2026 validation required"
+_ACTIVE_CONTEXT = "@active"
 _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PYTHON_VERSION = re.compile(r"^[0-9]+\.[0-9]+$")
 
@@ -270,6 +271,16 @@ class PowerFactory2026LifecycleAdapter:
         application = self._application_required()
         self._prior_project = _required_call(application, "GetActiveProject")
         self._prior_study_case = _required_call(application, "GetActiveStudyCase")
+        if self._config.project_selector == _ACTIVE_CONTEXT:
+            active = self._prior_project
+            if active is None:
+                raise PowerFactory2026ProbeError("no active project is available")
+            self._active_project = active
+            return {
+                "active_project": _object_summary(active),
+                "selection_mode": "active_context",
+                "validation_status": _UNVALIDATED,
+            }
         folder = _required_call(application, "GetProjectFolder", "prj")
         candidates = self._bounded_contents(folder, "*.IntPrj")
         selected = self._select_exact(
@@ -302,6 +313,16 @@ class PowerFactory2026LifecycleAdapter:
     def _activate_study_case(self) -> Mapping[str, Any]:
         self._require(LifecycleStage.ACTIVATE_PROJECT)
         application = self._application_required()
+        if self._config.study_case == _ACTIVE_CONTEXT:
+            active = self._prior_study_case
+            if active is None:
+                raise PowerFactory2026ProbeError("no active study case is available")
+            self._active_study_case = active
+            return {
+                "active_study_case": _object_summary(active),
+                "selection_mode": "active_context",
+                "validation_status": _UNVALIDATED,
+            }
         folder = _required_call(application, "GetProjectFolder", "study")
         candidates = self._bounded_contents(folder, "*.IntCase")
         selected = self._select_exact(candidates, self._config.study_case, "study case")

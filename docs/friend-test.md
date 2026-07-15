@@ -14,47 +14,29 @@ connection and produces sanitized lifecycle evidence for the next iteration.
   by that installation's `powerfactory.pyd`.
 - Codex CLI installed and authenticated.
 
-## Install And Configure
+## Automated Install
 
-Open PowerShell in the repository checkout. Replace the sample Python version,
-PowerFactory path, project, and study case with the real local values.
-
-```powershell
-uv sync --python 3.12
-$state = Join-Path $env:LOCALAPPDATA "PowerFactoryAgent"
-uv run powerfactory-agent init --state-dir $state --port 8787
-
-uv run powerfactory-agent configure-probe `
-  --config "$state\powerfactory-agent.json" `
-  --pyd-path "C:\Program Files\DIgSILENT\PowerFactory 2026\Python\3.12\powerfactory.pyd" `
-  --python-version 3.12 `
-  --project "Exact Project Name" `
-  --study-case "Exact Study Case Name"
-```
-
-Do not put a PowerFactory password in the JSON configuration. When a profile or
-password is required, configure only the relevant environment-variable names
-with `--user-profile-env-var` and `--password-env-var`, then set their values in
-the PowerShell session before starting the server.
-
-## Start And Register With Codex
-
-Keep this terminal open while testing:
+Open PowerShell in the repository checkout and run one command:
 
 ```powershell
-$env:POWERFACTORY_AGENT_MCP_TOKEN = (Get-Content -Raw "$state\mcp-token").Trim()
-uv run powerfactory-agent serve --config "$state\powerfactory-agent.json"
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
 ```
 
-In a second PowerShell terminal, use the same token environment variable and
-register the loopback service with Codex:
+The installer detects `PowerFactory 2026\Python\*\powerfactory.pyd`, creates a
+matching `uv` environment, configures the protected local MCP token, uses the
+currently active project and study case without selecting another model, runs
+the real lifecycle probe twice, starts the MCP service, and registers it with
+Codex CLI. Start Codex from that same PowerShell window so it inherits the
+bearer-token environment variable.
 
-```powershell
-$env:POWERFACTORY_AGENT_MCP_TOKEN = (Get-Content -Raw "$state\mcp-token").Trim()
-codex mcp add powerfactory-agent --url http://127.0.0.1:8787/mcp --bearer-token-env-var POWERFACTORY_AGENT_MCP_TOKEN
-```
+The installer will stop with structured probe evidence instead of picking a
+project or study case when PowerFactory has no active context. It does not use
+sample data or a fallback engine.
 
-Start a new Codex thread, call `get_session_status`, then call
+## Run The Test
+
+Start a new Codex CLI thread from the installer PowerShell window, call
+`get_session_status`, then call
 `run_powerfactory_connectivity_probe` with `repeat: 2`.
 
 ## Return Evidence

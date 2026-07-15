@@ -455,6 +455,27 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
         self.assertEqual(prior_project.activation_count, 1)
         self.assertEqual(prior_study_case.activation_count, 1)
 
+    def test_active_context_selection_observes_the_existing_context_without_activation(self) -> None:
+        application = FakeApplication()
+        application.active_project = application.projects[0]
+        application.active_study_case = application.study_cases[0]
+        adapter, _ = self.adapter(
+            application,
+            config=self.config(project_selector="@active", study_case="@active"),
+        )
+
+        adapter.execute_stage(LifecycleStage.ENVIRONMENT)
+        adapter.execute_stage(LifecycleStage.IMPORT_MODULE)
+        adapter.execute_stage(LifecycleStage.CONNECT_APPLICATION)
+        project = adapter.execute_stage(LifecycleStage.ACTIVATE_PROJECT)
+        study_case = adapter.execute_stage(LifecycleStage.ACTIVATE_STUDY_CASE)
+        cleanup = adapter.execute_stage(LifecycleStage.CLEANUP)
+
+        self.assertEqual("active_context", project["selection_mode"])
+        self.assertEqual("active_context", study_case["selection_mode"])
+        self.assertEqual([], application.activate_project_calls)
+        self.assertEqual([], cleanup["actions"])
+
     def test_failed_project_activation_does_not_deactivate_or_reactivate_prior_context(
         self,
     ) -> None:

@@ -14,9 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from powerfactory_agent.probes import LifecycleProbeRunner, PowerFactory2026LifecycleAdapter
-
-from .configuration import McpInstallation, load_probe_config, read_bearer_token
+from .configuration import McpInstallation, read_bearer_token
 
 
 MCP_CONTRACT_VERSION = "mcp-operation-contracts/v0.1.0"
@@ -77,19 +75,11 @@ def create_server(installation: McpInstallation) -> FastMCP:
     def run_powerfactory_connectivity_probe(repeat: int = 2) -> dict[str, object]:
         """Run the real read-only PowerFactory lifecycle probe and return sanitized evidence."""
 
-        if not 1 <= repeat <= 3:
-            raise ValueError("repeat must be between 1 and 3")
-        probe_config = load_probe_config(installation)
-        evidence = LifecycleProbeRunner(PowerFactory2026LifecycleAdapter(probe_config)).run(repeat)
-        evidence_path = _write_evidence(installation, evidence.to_dict())
-        logger.info("mcp.run_powerfactory_connectivity_probe status=%s", "pass" if evidence.passed else "fail")
-        return {
-            "contract_version": MCP_CONTRACT_VERSION,
-            "probe_status": "PASS" if evidence.passed else "FAIL",
-            "repeat": repeat,
-            "evidence_file": evidence_path.name,
-            "evidence": evidence.to_dict(),
-        }
+        from .probe import run_connectivity_probe
+
+        payload = run_connectivity_probe(installation, repeat)
+        logger.info("mcp.run_powerfactory_connectivity_probe status=%s", payload["probe_status"].lower())
+        return payload
 
     return server
 
