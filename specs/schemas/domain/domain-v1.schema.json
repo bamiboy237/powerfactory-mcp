@@ -2025,6 +2025,73 @@
       ],
       "type": "string"
     },
+    "ExecutionAdmissionEnvelope": {
+      "additionalProperties": false,
+      "properties": {
+        "admission_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "admitted_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "command_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "execution_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "fencing_token": {
+          "type": "integer"
+        },
+        "intent_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "lease_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "operation_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "request_digest": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        }
+      },
+      "required": [
+        "admission_id",
+        "workflow_id",
+        "workflow_version",
+        "command_id",
+        "operation_id",
+        "execution_id",
+        "lease_id",
+        "fencing_token",
+        "intent_id",
+        "request_digest",
+        "admitted_at"
+      ],
+      "type": "object"
+    },
     "ExecutionAuthorization": {
       "additionalProperties": false,
       "properties": {
@@ -5890,8 +5957,8 @@
       "type": "object"
     }
   },
-  "$id": "https://powerfactory-agent.local/schemas/domain/0.9.0/domain.schema.json",
+  "$id": "https://powerfactory-agent.local/schemas/domain/0.10.0/domain.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PowerFactory Agent Domain Contracts",
-  "x-schema-version": "0.9.0"
+  "x-schema-version": "0.10.0"
 }

@@ -8,7 +8,7 @@ import sqlite3
 from typing import Iterator
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 _MIGRATION_1 = (
@@ -369,6 +369,33 @@ _MIGRATION_7 = (
 )
 
 
+# The coordinator's envelope is the replay record for a single atomic
+# authorization, workflow, lease, and write-ahead-intent admission.
+_MIGRATION_8 = (
+    """CREATE TABLE execution_admission_envelopes (
+    admission_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL REFERENCES workflow_records(workflow_id),
+    idempotency_key TEXT NOT NULL,
+    execution_id TEXT NOT NULL UNIQUE REFERENCES authority_authorizations(execution_id),
+    operation_id TEXT NOT NULL UNIQUE,
+    intent_id TEXT NOT NULL UNIQUE REFERENCES reconciliation_intents(intent_id),
+    request_digest TEXT NOT NULL,
+    admitted_at TEXT NOT NULL,
+    envelope_json TEXT NOT NULL,
+    UNIQUE(workflow_id, idempotency_key)
+)""",
+    "CREATE INDEX execution_admission_envelopes_workflow_idx ON execution_admission_envelopes(workflow_id, admitted_at)",
+    """CREATE TRIGGER execution_admission_envelopes_immutable_update
+    BEFORE UPDATE ON execution_admission_envelopes BEGIN
+        SELECT RAISE(ABORT, 'execution admission envelopes are append-only');
+    END""",
+    """CREATE TRIGGER execution_admission_envelopes_immutable_delete
+    BEFORE DELETE ON execution_admission_envelopes BEGIN
+        SELECT RAISE(ABORT, 'execution admission envelopes are append-only');
+    END""",
+)
+
+
 class DatabaseVersionError(RuntimeError):
     """The database schema is newer than this process understands."""
 
@@ -459,6 +486,11 @@ class SQLiteDatabase:
                 for statement in _MIGRATION_7:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version = 7")
+                current = 7
+            if current < 8:
+                for statement in _MIGRATION_8:
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version = 8")
 
 
 __all__ = ["DatabaseVersionError", "SCHEMA_VERSION", "SQLiteDatabase"]

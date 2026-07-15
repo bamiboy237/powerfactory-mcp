@@ -75,11 +75,16 @@ class SerializedGatewayOwnerIntegrationTests(unittest.TestCase):
                     SessionObservation,
                 )
 
+                submitted = owner.submit_inspect_context(
+                    idempotency_key="slow-inspect",
+                    wait_for_response=False,
+                )
+                self.assertTrue(gateway.inspect_entered.wait(timeout=1))
                 timed_out = owner.submit_inspect_context(
                     idempotency_key="slow-inspect",
                     wait_for_response=True,
                 )
-                self.assertTrue(gateway.inspect_entered.is_set())
+                self.assertEqual(submitted.operation_id, timed_out.operation_id)
                 self.assertEqual(OperationState.CLIENT_TIMED_OUT, timed_out.state)
                 with self.assertRaises(OperationResultUnavailableError):
                     owner.completed_result(timed_out.operation_id, ContextObservation)

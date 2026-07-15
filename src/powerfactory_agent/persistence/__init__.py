@@ -1,6 +1,11 @@
 """Platform-independent persistence primitives."""
 
 from .database import DatabaseVersionError, SCHEMA_VERSION, SQLiteDatabase
+from .execution_admission import (
+    ExecutionAdmissionConflictError,
+    ExecutionAdmissionCoordinator,
+    ExecutionAdmissionRejectedError,
+)
 from .approval_store import (
     ApprovalAuthorityStore,
     AuthorityApprovalRequestNotFoundError,
