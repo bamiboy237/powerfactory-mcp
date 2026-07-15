@@ -3455,6 +3455,15 @@
       ],
       "type": "string"
     },
+    "ManualDisposition": {
+      "enum": [
+        "confirm_before",
+        "confirm_after_observed",
+        "abandon",
+        "authorize_compensation"
+      ],
+      "type": "string"
+    },
     "MetricComparison": {
       "additionalProperties": false,
       "properties": {
@@ -4063,6 +4072,31 @@
       ],
       "type": "string"
     },
+    "ObservationOutcome": {
+      "enum": [
+        "value_observed",
+        "precondition_rejected",
+        "effect_uncertain",
+        "client_timed_out",
+        "owner_unavailable",
+        "engine_unavailable",
+        "context_unverified",
+        "identity_unverified",
+        "locator_unverified",
+        "fingerprint_mismatch",
+        "unit_unverified",
+        "persistence_unavailable"
+      ],
+      "type": "string"
+    },
+    "ObservationSource": {
+      "enum": [
+        "owner_return",
+        "live_read",
+        "recovery"
+      ],
+      "type": "string"
+    },
     "OperationType": {
       "enum": [
         "area_load_scaling",
@@ -4408,6 +4442,214 @@
       "required": [
         "value",
         "unit"
+      ],
+      "type": "object"
+    },
+    "ReconciliationClassification": {
+      "enum": [
+        "before",
+        "after_observed",
+        "diverged",
+        "unavailable"
+      ],
+      "type": "string"
+    },
+    "ReconciliationObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "configuration_key": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ConfigurationKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostic_reference": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "intent_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "live_state_fingerprint": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LiveStateFingerprint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observation_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "observed_value": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operation_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ObservationOutcome"
+        },
+        "source": {
+          "$ref": "#/$defs/ObservationSource"
+        },
+        "workspace_revision": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WorkspaceRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "observation_id",
+        "intent_id",
+        "operation_id",
+        "attempt_id",
+        "source",
+        "outcome",
+        "observed_at",
+        "diagnostic_reference",
+        "observed_value",
+        "configuration_key",
+        "live_state_fingerprint",
+        "workspace_revision"
+      ],
+      "type": "object"
+    },
+    "ReconciliationRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "$ref": "#/$defs/ReconciliationClassification"
+        },
+        "classified_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "completed_at": {
+          "oneOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_reference": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "intent_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "manual_disposition": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ManualDisposition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observation_ids": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "operator_principal_reference": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quarantine_reference": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reconciliation_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        }
+      },
+      "required": [
+        "reconciliation_id",
+        "intent_id",
+        "workflow_id",
+        "workflow_version",
+        "classification",
+        "observation_ids",
+        "classified_at",
+        "evidence_reference",
+        "quarantine_reference",
+        "manual_disposition",
+        "operator_principal_reference",
+        "completed_at"
       ],
       "type": "object"
     },
@@ -5511,10 +5753,145 @@
         "counter"
       ],
       "type": "object"
+    },
+    "WriteAheadIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_number": {
+          "type": "integer"
+        },
+        "attribute": {
+          "$ref": "#/$defs/AttributeSelector"
+        },
+        "configuration_key": {
+          "$ref": "#/$defs/ConfigurationKey"
+        },
+        "correlation_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "execution_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        "expected_before": {
+          "$ref": "#/$defs/Quantity"
+        },
+        "fencing_token": {
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "intent_digest": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "intent_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "lease_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "live_state_fingerprint": {
+          "$ref": "#/$defs/LiveStateFingerprint"
+        },
+        "locator_version_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "operation_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "owner_instance_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "policy_versions": {
+          "items": {
+            "$ref": "#/$defs/VersionedName"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "product_identity": {
+          "$ref": "#/$defs/ProductIdentity"
+        },
+        "proposed_after": {
+          "$ref": "#/$defs/Quantity"
+        },
+        "request_digest": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "session_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        },
+        "workspace_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workspace_revision": {
+          "$ref": "#/$defs/WorkspaceRevision"
+        }
+      },
+      "required": [
+        "intent_id",
+        "operation_id",
+        "workflow_id",
+        "workflow_version",
+        "idempotency_key",
+        "execution_id",
+        "lease_id",
+        "fencing_token",
+        "workspace_id",
+        "workspace_revision",
+        "product_identity",
+        "locator_version_id",
+        "attribute",
+        "expected_before",
+        "proposed_after",
+        "configuration_key",
+        "live_state_fingerprint",
+        "request_digest",
+        "policy_versions",
+        "owner_instance_id",
+        "session_id",
+        "correlation_id",
+        "attempt_number",
+        "created_at",
+        "intent_digest"
+      ],
+      "type": "object"
     }
   },
-  "$id": "https://powerfactory-agent.local/schemas/domain/0.8.0/domain.schema.json",
+  "$id": "https://powerfactory-agent.local/schemas/domain/0.9.0/domain.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PowerFactory Agent Domain Contracts",
-  "x-schema-version": "0.8.0"
+  "x-schema-version": "0.9.0"
 }

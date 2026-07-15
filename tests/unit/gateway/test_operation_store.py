@@ -37,7 +37,7 @@ class OperationStoreTests(unittest.TestCase):
         self.assertEqual("wal", str(self.database.pragma("journal_mode")).lower())
         self.assertEqual(1, self.database.pragma("foreign_keys"))
         self.assertEqual(5_000, self.database.pragma("busy_timeout"))
-        self.assertEqual(6, self.database.pragma("user_version"))
+        self.assertEqual(7, self.database.pragma("user_version"))
 
     def test_atomic_transition_allows_only_one_concurrent_claim(self) -> None:
         record = self.admit()

@@ -40,6 +40,7 @@ def _is_domain_dataclass(value: object) -> bool:
         "powerfactory_agent.domain.values",
         "powerfactory_agent.domain.workflow",
         "powerfactory_agent.domain.lease",
+        "powerfactory_agent.domain.reconciliation",
     } and not value.__class__.__name__.startswith("_")
 
 
@@ -180,6 +181,7 @@ def _decode(annotation: object, value: object, path: str) -> object:
             "powerfactory_agent.domain.values",
             "powerfactory_agent.domain.workflow",
             "powerfactory_agent.domain.lease",
+            "powerfactory_agent.domain.reconciliation",
         } or annotation.__name__.startswith("_"):
             raise SerializationError(f"{path} is not an admitted domain model")
         if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):

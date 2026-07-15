@@ -123,7 +123,10 @@ class SerializedOperationWorkerTests(unittest.TestCase):
             client_response_deadline_ms=25,
             engine_health_threshold_ms=500,
         )
-        timed_out = worker.submit(OperationRequest("test.slow", {}, "slow-1"))
+        request = OperationRequest("test.slow", {}, "slow-1")
+        submitted = worker.submit(request, wait=False)
+        wait_until(lambda: worker.status(submitted.operation_id).state is OperationState.IN_FLIGHT)
+        timed_out = worker.submit(request)
         self.assertEqual(OperationState.CLIENT_TIMED_OUT, timed_out.state)
         release.set()
         completed = worker.wait_for_terminal(timed_out.operation_id, timeout_ms=1_000)
@@ -159,7 +162,7 @@ class SerializedOperationWorkerTests(unittest.TestCase):
         )
         record = worker.submit(OperationRequest("test.block", {}, "health-1"), wait=False)
         wait_until(lambda: worker.status(record.operation_id).state is OperationState.ENGINE_UNRESPONSIVE)
-        self.assertTrue(worker.quarantined)
+        wait_until(lambda: worker.quarantined)
         with self.assertRaises(EngineQuarantinedError):
             worker.submit(OperationRequest("test.block", {}, "health-2"), wait=False)
         release.set()

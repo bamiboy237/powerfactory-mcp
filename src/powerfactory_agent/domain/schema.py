@@ -11,17 +11,17 @@ from pathlib import Path
 import types
 from typing import Union, get_args, get_origin, get_type_hints
 
-from . import approval, calculations, gateway, inventory, lease, models, topology, values, workflow
+from . import approval, calculations, gateway, inventory, lease, models, reconciliation, topology, values, workflow
 
 
-SCHEMA_VERSION = "0.8.0"
+SCHEMA_VERSION = "0.9.0"
 SCHEMA_ID = f"https://powerfactory-agent.local/schemas/domain/{SCHEMA_VERSION}/domain.schema.json"
 SCHEMA_PATH = Path("specs/schemas/domain/domain-v1.schema.json")
 
 
 def _public_contract_types() -> tuple[type[object], ...]:
     admitted: list[type[object]] = []
-    for module in (values, models, inventory, topology, gateway, calculations, workflow, approval, lease):
+    for module in (values, models, inventory, topology, gateway, calculations, workflow, approval, lease, reconciliation):
         for name in module.__all__ if hasattr(module, "__all__") else dir(module):
             candidate = getattr(module, name)
             if (
@@ -108,6 +108,12 @@ def _definition(contract_type: type[object]) -> dict[str, object]:
         properties["counter"] = {"type": "integer", "minimum": 0}
     if contract_type is values.PowerFactoryLocator:
         properties["locator_version_id"] = {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        }
+    if contract_type is reconciliation.WriteAheadIntent:
+        properties["execution_id"] = {
             "type": "string",
             "format": "uuid",
             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",

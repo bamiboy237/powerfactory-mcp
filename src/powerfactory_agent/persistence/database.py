@@ -8,7 +8,7 @@ import sqlite3
 from typing import Iterator
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 _MIGRATION_1 = (
@@ -306,6 +306,69 @@ _MIGRATION_6 = (
 )
 
 
+# Reconciliation facts are append-only.  A classification may be appended more
+# than once as later fresh evidence arrives; callers select the newest record.
+_MIGRATION_7 = (
+    """CREATE TABLE reconciliation_intents (
+    intent_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL,
+    workflow_id TEXT NOT NULL REFERENCES workflow_records(workflow_id),
+    workflow_version_counter INTEGER NOT NULL,
+    execution_id TEXT NOT NULL,
+    lease_id TEXT NOT NULL,
+    intent_digest TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    intent_json TEXT NOT NULL
+)""",
+    """CREATE TABLE reconciliation_observations (
+    observation_id TEXT PRIMARY KEY,
+    intent_id TEXT NOT NULL REFERENCES reconciliation_intents(intent_id),
+    operation_id TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    observation_json TEXT NOT NULL
+)""",
+    """CREATE TABLE reconciliation_records (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    reconciliation_id TEXT NOT NULL UNIQUE,
+    intent_id TEXT NOT NULL REFERENCES reconciliation_intents(intent_id),
+    workflow_id TEXT NOT NULL REFERENCES workflow_records(workflow_id),
+    workflow_version_counter INTEGER NOT NULL,
+    classification TEXT NOT NULL,
+    classified_at TEXT NOT NULL,
+    record_json TEXT NOT NULL
+)""",
+    "CREATE INDEX reconciliation_intents_workflow_idx ON reconciliation_intents(workflow_id, created_at)",
+    "CREATE INDEX reconciliation_observations_intent_idx ON reconciliation_observations(intent_id, observed_at)",
+    "CREATE INDEX reconciliation_records_intent_idx ON reconciliation_records(intent_id, sequence)",
+    """CREATE TRIGGER reconciliation_intents_immutable_update
+    BEFORE UPDATE ON reconciliation_intents BEGIN
+        SELECT RAISE(ABORT, 'reconciliation intents are append-only');
+    END""",
+    """CREATE TRIGGER reconciliation_intents_immutable_delete
+    BEFORE DELETE ON reconciliation_intents BEGIN
+        SELECT RAISE(ABORT, 'reconciliation intents are append-only');
+    END""",
+    """CREATE TRIGGER reconciliation_observations_immutable_update
+    BEFORE UPDATE ON reconciliation_observations BEGIN
+        SELECT RAISE(ABORT, 'reconciliation observations are append-only');
+    END""",
+    """CREATE TRIGGER reconciliation_observations_immutable_delete
+    BEFORE DELETE ON reconciliation_observations BEGIN
+        SELECT RAISE(ABORT, 'reconciliation observations are append-only');
+    END""",
+    """CREATE TRIGGER reconciliation_records_immutable_update
+    BEFORE UPDATE ON reconciliation_records BEGIN
+        SELECT RAISE(ABORT, 'reconciliation records are append-only');
+    END""",
+    """CREATE TRIGGER reconciliation_records_immutable_delete
+    BEFORE DELETE ON reconciliation_records BEGIN
+        SELECT RAISE(ABORT, 'reconciliation records are append-only');
+    END""",
+)
+
+
 class DatabaseVersionError(RuntimeError):
     """The database schema is newer than this process understands."""
 
@@ -391,6 +454,11 @@ class SQLiteDatabase:
                 for statement in _MIGRATION_6:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version = 6")
+                current = 6
+            if current < 7:
+                for statement in _MIGRATION_7:
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version = 7")
 
 
 __all__ = ["DatabaseVersionError", "SCHEMA_VERSION", "SQLiteDatabase"]
