@@ -62,6 +62,15 @@ from .inventory import (
     ModelSummaryRequest,
 )
 from .calculations import *
+from .workflow import (
+    AuditActorClass,
+    AuditEvent,
+    AuditEventType,
+    IdempotentCommandRecord,
+    WorkflowCommandStatus,
+    WorkflowRecord,
+    WorkflowState,
+)
 from .topology import (
     AreaZoneQuery,
     ComponentsQuery,

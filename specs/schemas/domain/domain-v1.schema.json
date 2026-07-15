@@ -499,6 +499,173 @@
       ],
       "type": "object"
     },
+    "AuditActorClass": {
+      "enum": [
+        "requester",
+        "workflow_service",
+        "approval_authority",
+        "lease_manager",
+        "serialized_owner",
+        "recovery_service",
+        "operator"
+      ],
+      "type": "string"
+    },
+    "AuditEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "actor_class": {
+          "$ref": "#/$defs/AuditActorClass"
+        },
+        "authorization_reference": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "command_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "correlation_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "event_type": {
+          "$ref": "#/$defs/AuditEventType"
+        },
+        "evidence_reference": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "fencing_token": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "operation_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_digest": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "state_after": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WorkflowState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_before": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WorkflowState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        }
+      },
+      "required": [
+        "event_id",
+        "workflow_id",
+        "workflow_version",
+        "event_type",
+        "actor_class",
+        "occurred_at",
+        "request_digest",
+        "evidence_reference",
+        "command_id",
+        "operation_id",
+        "correlation_id",
+        "state_before",
+        "state_after",
+        "authorization_reference",
+        "fencing_token"
+      ],
+      "type": "object"
+    },
+    "AuditEventType": {
+      "enum": [
+        "requested",
+        "preview_started",
+        "preview_persisted",
+        "lease_released",
+        "authorization_requested",
+        "authorization_observed",
+        "admission_revalidated",
+        "intent_committed",
+        "submitted",
+        "owner_returned",
+        "client_timed_out",
+        "live_observed",
+        "verified",
+        "recovery_started",
+        "classified",
+        "quarantined",
+        "manual_disposition",
+        "reconciled"
+      ],
+      "type": "string"
+    },
     "CalculationComparison": {
       "additionalProperties": false,
       "properties": {
@@ -2180,6 +2347,95 @@
         "attributes",
         "relationships",
         "provenance"
+      ],
+      "type": "object"
+    },
+    "IdempotentCommandRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "command_name": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "completed_at": {
+          "oneOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        },
+        "idempotency_key": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "operation_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_digest": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "requested_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "result_digest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ContentDigest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resulting_workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        },
+        "status": {
+          "$ref": "#/$defs/WorkflowCommandStatus"
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "workflow_id",
+        "command_name",
+        "idempotency_key",
+        "request_digest",
+        "expected_workflow_version",
+        "status",
+        "resulting_workflow_version",
+        "requested_at",
+        "operation_id",
+        "result_digest",
+        "completed_at"
       ],
       "type": "object"
     },
@@ -4641,6 +4897,125 @@
       ],
       "type": "string"
     },
+    "WorkflowCommandStatus": {
+      "enum": [
+        "requested",
+        "in_progress",
+        "completed",
+        "rejected",
+        "version_conflict",
+        "idempotency_conflict",
+        "reconciliation_required",
+        "quarantined"
+      ],
+      "type": "string"
+    },
+    "WorkflowRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration_key": {
+          "$ref": "#/$defs/ConfigurationKey"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "latest_command_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latest_operation_id": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operation_specification": {
+          "$ref": "#/$defs/VersionedName"
+        },
+        "proposal_digest": {
+          "$ref": "#/$defs/ContentDigest"
+        },
+        "recovery_reference": {
+          "oneOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/WorkflowState"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "workflow_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow_version": {
+          "$ref": "#/$defs/WorkflowVersion"
+        }
+      },
+      "required": [
+        "workflow_id",
+        "state",
+        "workflow_version",
+        "operation_specification",
+        "configuration_key",
+        "proposal_digest",
+        "created_at",
+        "updated_at",
+        "latest_command_id",
+        "latest_operation_id",
+        "recovery_reference"
+      ],
+      "type": "object"
+    },
+    "WorkflowState": {
+      "enum": [
+        "new",
+        "previewing",
+        "awaiting_authorization",
+        "execution_admission",
+        "executing",
+        "calculating",
+        "verifying",
+        "completed",
+        "failed_before_effect",
+        "reconciliation_required",
+        "quarantined",
+        "rollback_previewing",
+        "awaiting_rollback_authorization",
+        "rollback_admission",
+        "rolling_back",
+        "rollback_verifying",
+        "rolled_back",
+        "abandoned"
+      ],
+      "type": "string"
+    },
     "WorkflowVersion": {
       "additionalProperties": false,
       "properties": {
@@ -4688,8 +5063,8 @@
       "type": "object"
     }
   },
-  "$id": "https://powerfactory-agent.local/schemas/domain/0.5.0/domain.schema.json",
+  "$id": "https://powerfactory-agent.local/schemas/domain/0.6.0/domain.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PowerFactory Agent Domain Contracts",
-  "x-schema-version": "0.5.0"
+  "x-schema-version": "0.6.0"
 }

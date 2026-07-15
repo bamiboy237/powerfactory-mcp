@@ -8,7 +8,7 @@ import sqlite3
 from typing import Iterator
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 _MIGRATION_1 = (
@@ -131,6 +131,59 @@ _MIGRATION_3 = (
 )
 
 
+# Workflow state is the only mutable workflow record. Commands and audit facts
+# are immutable evidence, protected by SQLite triggers as well as store APIs.
+_MIGRATION_4 = (
+    """CREATE TABLE workflow_records (
+    workflow_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL,
+    workflow_version_counter INTEGER NOT NULL,
+    configuration_key TEXT NOT NULL,
+    record_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)""",
+    """CREATE TABLE workflow_commands (
+    command_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL REFERENCES workflow_records(workflow_id),
+    command_name TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    expected_version_counter INTEGER NOT NULL,
+    resulting_version_counter INTEGER NOT NULL,
+    command_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    UNIQUE(workflow_id, idempotency_key)
+)""",
+    """CREATE TABLE workflow_audit_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    workflow_id TEXT NOT NULL REFERENCES workflow_records(workflow_id),
+    workflow_version_counter INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    event_json TEXT NOT NULL
+)""",
+    "CREATE INDEX workflow_commands_workflow_idx ON workflow_commands(workflow_id, recorded_at)",
+    "CREATE INDEX workflow_audit_events_workflow_idx ON workflow_audit_events(workflow_id, sequence)",
+    """CREATE TRIGGER workflow_commands_immutable_update
+    BEFORE UPDATE ON workflow_commands BEGIN
+        SELECT RAISE(ABORT, 'workflow command records are append-only');
+    END""",
+    """CREATE TRIGGER workflow_commands_immutable_delete
+    BEFORE DELETE ON workflow_commands BEGIN
+        SELECT RAISE(ABORT, 'workflow command records are append-only');
+    END""",
+    """CREATE TRIGGER workflow_audit_events_immutable_update
+    BEFORE UPDATE ON workflow_audit_events BEGIN
+        SELECT RAISE(ABORT, 'workflow audit events are append-only');
+    END""",
+    """CREATE TRIGGER workflow_audit_events_immutable_delete
+    BEFORE DELETE ON workflow_audit_events BEGIN
+        SELECT RAISE(ABORT, 'workflow audit events are append-only');
+    END""",
+)
+
+
 class DatabaseVersionError(RuntimeError):
     """The database schema is newer than this process understands."""
 
@@ -201,6 +254,11 @@ class SQLiteDatabase:
                 for statement in _MIGRATION_3:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version = 3")
+                current = 3
+            if current < 4:
+                for statement in _MIGRATION_4:
+                    connection.execute(statement)
+                connection.execute("PRAGMA user_version = 4")
 
 
 __all__ = ["DatabaseVersionError", "SCHEMA_VERSION", "SQLiteDatabase"]
