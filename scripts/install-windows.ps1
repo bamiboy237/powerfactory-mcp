@@ -117,15 +117,44 @@ function Set-PrivateStateAcl {
     )
 
     $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    & $IcaclsPath $Directory "/inheritance:r" "/grant:r" "*$currentSid`:(OI)(CI)F" `
-        "/grant:r" "*S-1-5-18:(OI)(CI)F" | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Stop-Install "credential protection" "Windows ACLs could not be restricted for $Directory." `
-            "Run PowerShell as the engineer account that will run Codex, then rerun the installer."
+    $allowedSids = @($currentSid, "S-1-5-18")
+    $aclTargets = @((Get-Item -LiteralPath $Directory)) + @(
+        Get-ChildItem -LiteralPath $Directory -Force -Recurse | Sort-Object { $_.FullName.Length }
+    )
+
+    foreach ($target in $aclTargets) {
+        $rights = if ($target.PSIsContainer) { "(OI)(CI)F" } else { "F" }
+        & $IcaclsPath $target.FullName "/inheritance:r" "/grant:r" "*${currentSid}:$rights" `
+            "/grant:r" "*S-1-5-18:$rights" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Install "credential protection" "Windows ACLs could not be restricted for $($target.FullName)." `
+                "Run PowerShell as the engineer account that will run Codex, then rerun the installer."
+        }
+
+        $unexpectedIdentities = @(
+            foreach ($entry in (Get-Acl -LiteralPath $target.FullName).Access) {
+                if ($entry.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow) {
+                    try {
+                        $sid = $entry.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+                    }
+                    catch {
+                        $sid = $null
+                    }
+                    if ($sid -notin $allowedSids) {
+                        if ($sid) { "*$sid" } else { $entry.IdentityReference.Value }
+                    }
+                }
+            }
+        ) | Sort-Object -Unique
+        foreach ($identity in @($unexpectedIdentities)) {
+            & $IcaclsPath $target.FullName "/remove:g" $identity | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Stop-Install "credential protection" "Windows ACLs could not remove access for $identity from $($target.FullName)." `
+                    "Run PowerShell as the engineer account that will run Codex, then rerun the installer."
+            }
+        }
     }
 
-    $allowedSids = @($currentSid, "S-1-5-18")
-    $aclTargets = @((Get-Item -LiteralPath $Directory)) + @(Get-ChildItem -LiteralPath $Directory -Force -Recurse)
     $unexpected = @(
         foreach ($target in $aclTargets) {
             foreach ($entry in (Get-Acl -LiteralPath $target.FullName).Access) {
