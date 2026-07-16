@@ -3,7 +3,9 @@ param(
     [string]$StateDir = (Join-Path $env:LOCALAPPDATA "PowerFactoryAgent"),
     [ValidateRange(1024, 65535)]
     [int]$Port = 8787,
-    [string]$PowerFactoryPydPath
+    [string]$PowerFactoryPydPath,
+    [string]$Project,
+    [string]$StudyCase
 )
 
 $ErrorActionPreference = "Stop"
@@ -116,7 +118,7 @@ function Set-PrivateStateAcl {
 
     $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     & $IcaclsPath $Directory "/inheritance:r" "/grant:r" "*$currentSid`:(OI)(CI)F" `
-        "/grant:r" "*S-1-5-18:(OI)(CI)F" "/T" "/C" | Out-Null
+        "/grant:r" "*S-1-5-18:(OI)(CI)F" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Stop-Install "credential protection" "Windows ACLs could not be restricted for $Directory." `
             "Run PowerShell as the engineer account that will run Codex, then rerun the installer."
@@ -142,7 +144,7 @@ function Set-PrivateStateAcl {
         }
     )
     if ($unexpected.Count -gt 0) {
-        Stop-Install "credential protection" "Unexpected accounts retain access to $Directory: $($unexpected -join ', ')." `
+        Stop-Install "credential protection" "Unexpected accounts retain access to ${Directory}: $($unexpected -join ', ')." `
             "Move the state directory aside, create a fresh one owned by this account, and rerun."
     }
 }
@@ -251,7 +253,17 @@ Write-Host "PowerFactory MCP guided installation"
 Write-Host "  Product: $($runtime.ProductDirectory)"
 Write-Host "  Python ABI: $($runtime.PythonVersion)"
 Write-Host "  State: $StateDir"
-Write-Host "The real probe will use the active project and active study case; it will not select another model."
+Write-Host "PowerFactory must be closed while the product-owned external engine is running."
+if (-not $Project) {
+    $Project = (Read-Host "Enter the exact PowerFactory project name").Trim()
+}
+if (-not $StudyCase) {
+    $StudyCase = (Read-Host "Enter the exact study case name").Trim()
+}
+if (-not $Project -or -not $StudyCase) {
+    Stop-Install "PowerFactory context configuration" "Project and study-case names are required." `
+        "Rerun and enter the exact non-confidential project and study-case names."
+}
 
 Push-Location $repository
 try {
@@ -321,14 +333,15 @@ try {
             "--config", $configPath,
             "--pyd-path", $runtime.Path,
             "--python-version", $runtime.PythonVersion,
-            "--project", "@active",
-            "--study-case", "@active"
+            "--project", $Project,
+            "--study-case", $StudyCase,
+            "--session-ownership", "product_owned"
         ) `
         "Check the selected PowerFactory Python module and rerun."
 
     Invoke-CheckedCommand "real PowerFactory connectivity probe" $uv `
         @("run", "powerfactory-agent", "probe", "--config", $configPath, "--repeat", "2") `
-        "Open the intended non-confidential project and study case, check the licence, then rerun. Keep the generated evidence file for diagnosis."
+        "Close PowerFactory, check the licence and exact project/study-case names, then rerun. Keep the generated evidence file for diagnosis."
 
     $token = (Get-Content -LiteralPath $tokenPath -Raw).Trim()
     if ($token.Length -lt 32) {

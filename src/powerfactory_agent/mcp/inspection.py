@@ -1,10 +1,13 @@
-"""Bounded, read-only inspection of the active PowerFactory context."""
+"""Bounded, read-only inspection of the configured PowerFactory context."""
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 from typing import Any
 
@@ -18,9 +21,8 @@ from powerfactory_agent.probes import (
 
 from .configuration import McpInstallation, load_probe_config
 
-
 INSPECTION_CONTRACT_VERSION = "active-project-inspection/v1"
-_ACTIVE_CONTEXT = "@active"
+_INSPECTION_TIMEOUT_SECONDS = 180
 _INSPECTION_STAGES = (
     LifecycleStage.ENVIRONMENT,
     LifecycleStage.IMPORT_MODULE,
@@ -35,16 +37,36 @@ AdapterFactory = Callable[[PowerFactory2026ProbeConfig], LifecycleAdapter]
 def run_active_project_inspection(
     installation: McpInstallation,
     *,
-    adapter_factory: AdapterFactory = PowerFactory2026LifecycleAdapter,
+    adapter_factory: AdapterFactory | None = None,
 ) -> dict[str, Any]:
-    """Inspect only the already-active project and study case, then clean up."""
+    """Inspect the exact configured context without running a calculation."""
 
     config = load_probe_config(installation)
-    if config.project_selector != _ACTIVE_CONTEXT or config.study_case != _ACTIVE_CONTEXT:
-        raise ValueError(
-            "active-project inspection requires project and study case selectors to be @active"
-        )
+    evidence = (
+        _inspect_configured_context(config, adapter_factory)
+        if adapter_factory is not None
+        else _run_isolated_inspection(installation)
+    )
+    evidence_path = _write_inspection_evidence(installation, evidence)
+    return {**evidence, "evidence_file": evidence_path.name}
 
+
+def write_single_project_inspection(probe_config_path: Path, output: Path) -> bool:
+    """Run one inspection in this disposable PowerFactory worker process."""
+
+    config = PowerFactory2026ProbeConfig.from_json_file(probe_config_path)
+    evidence = _inspect_configured_context(config, PowerFactory2026LifecycleAdapter)
+    output.write_text(
+        json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+    return evidence["status"] == "PASS"
+
+
+def _inspect_configured_context(
+    config: PowerFactory2026ProbeConfig,
+    adapter_factory: AdapterFactory,
+) -> dict[str, Any]:
     adapter = adapter_factory(config)
     stages: dict[str, Any] = {}
     failure_stage: str | None = None
@@ -72,21 +94,58 @@ def run_active_project_inspection(
             failure_stage = LifecycleStage.CLEANUP.value
             failure = cleanup
 
-    evidence: dict[str, Any] = {
-        "schema_version": INSPECTION_CONTRACT_VERSION,
-        "status": "PASS" if failure_stage is None else "FAIL",
-        "read_only": True,
-        "calculation_executed": False,
-        "failure_stage": failure_stage,
-        "failure": failure,
-        "active_project": stages.get(LifecycleStage.ACTIVATE_PROJECT.value),
-        "active_study_case": stages.get(LifecycleStage.ACTIVATE_STUDY_CASE.value),
-        "inventory": stages.get(LifecycleStage.INVENTORY.value),
-        "cleanup": cleanup,
-    }
-    evidence = sanitize_evidence(evidence)
-    evidence_path = _write_inspection_evidence(installation, evidence)
-    return {**evidence, "evidence_file": evidence_path.name}
+    return sanitize_evidence(
+        {
+            "schema_version": INSPECTION_CONTRACT_VERSION,
+            "status": "PASS" if failure_stage is None else "FAIL",
+            "read_only": True,
+            "calculation_executed": False,
+            "failure_stage": failure_stage,
+            "failure": failure,
+            "active_project": stages.get(LifecycleStage.ACTIVATE_PROJECT.value),
+            "active_study_case": stages.get(LifecycleStage.ACTIVATE_STUDY_CASE.value),
+            "inventory": stages.get(LifecycleStage.INVENTORY.value),
+            "cleanup": cleanup,
+        }
+    )
+
+
+def _run_isolated_inspection(installation: McpInstallation) -> dict[str, Any]:
+    if installation.probe_config_file is None:
+        raise RuntimeError("PowerFactory probe is not configured")
+    with tempfile.TemporaryDirectory(prefix="powerfactory-inspection-") as directory:
+        output = Path(directory) / "evidence.json"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "powerfactory_agent.mcp.cli",
+                "_inspect-once",
+                "--probe-config",
+                str(installation.probe_config_file),
+                "--output",
+                str(output),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=_INSPECTION_TIMEOUT_SECONDS,
+        )
+        if not output.is_file():
+            diagnostic = (completed.stderr or completed.stdout).strip()
+            if len(diagnostic) > 500:
+                diagnostic = diagnostic[-500:]
+            suffix = f": {diagnostic}" if diagnostic else ""
+            raise RuntimeError(
+                f"PowerFactory inspection worker exited with code {completed.returncode}{suffix}"
+            )
+        try:
+            evidence = json.loads(output.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("PowerFactory inspection worker wrote invalid evidence") from error
+        if not isinstance(evidence, dict) or evidence.get("status") not in {"PASS", "FAIL"}:
+            raise RuntimeError("PowerFactory inspection worker returned malformed evidence")
+        return evidence
 
 
 def _write_inspection_evidence(

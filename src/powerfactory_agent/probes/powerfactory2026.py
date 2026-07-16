@@ -15,14 +15,14 @@ import re
 import struct
 import sys
 import sysconfig
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from .lifecycle import LifecycleStage
-
 
 _UNVALIDATED = "UNVALIDATED - Windows PowerFactory 2026 validation required"
 _ACTIVE_CONTEXT = "@active"
@@ -81,9 +81,7 @@ class PowerFactory2026ProbeConfig:
             ("user_profile_env_var", self.user_profile_env_var),
             ("password_env_var", self.password_env_var),
         ):
-            if environment_name is not None and not _ENVIRONMENT_NAME.fullmatch(
-                environment_name
-            ):
+            if environment_name is not None and not _ENVIRONMENT_NAME.fullmatch(environment_name):
                 raise ValueError(f"{field_name} must name an environment variable")
 
     @classmethod
@@ -120,9 +118,7 @@ class PowerFactory2026ProbeConfig:
     def from_json_file(cls, path: str | Path) -> PowerFactory2026ProbeConfig:
         with Path(path).open("r", encoding="utf-8") as stream:
             value = json.load(stream)
-        if not isinstance(value, Mapping) or not all(
-            isinstance(key, str) for key in value
-        ):
+        if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
             raise ValueError("probe configuration JSON must be an object")
         return cls.from_mapping(value)
 
@@ -241,18 +237,18 @@ class PowerFactory2026LifecycleAdapter:
         self._require(LifecycleStage.IMPORT_MODULE)
         if self._module is None:
             raise PowerFactory2026ProbeError("powerfactory module is unavailable")
-        get_application = getattr(self._module, "GetApplicationExt")
+        get_application = self._module.GetApplicationExt
         profile = self._environment_value(self._config.user_profile_env_var)
         password = self._environment_value(self._config.password_env_var)
         ini_argument = (
-            f'/ini "{self._config.ini_path}"'
-            if self._config.ini_path is not None
-            else None
+            f'/ini "{self._config.ini_path}"' if self._config.ini_path is not None else None
         )
         try:
             application = get_application(profile, password, ini_argument)
-        except Exception:
-            raise PowerFactory2026ProbeError("GetApplicationExt failed") from None
+        except Exception as error:
+            raise PowerFactory2026ProbeError(
+                f"GetApplicationExt failed ({type(error).__name__})"
+            ) from None
         finally:
             password = None
         if application is None:
@@ -283,14 +279,10 @@ class PowerFactory2026LifecycleAdapter:
             }
         folder = _required_call(application, "GetProjectFolder", "prj")
         candidates = self._bounded_contents(folder, "*.IntPrj")
-        selected = self._select_exact(
-            candidates, self._config.project_selector, "project"
-        )
+        selected = self._select_exact(candidates, self._config.project_selector, "project")
         activate_project = getattr(application, "ActivateProject", None)
         if not callable(activate_project):
-            raise PowerFactory2026ProbeError(
-                "application has no callable ActivateProject"
-            )
+            raise PowerFactory2026ProbeError("application has no callable ActivateProject")
         try:
             return_code = activate_project(self._config.project_selector)
         except Exception:
@@ -392,9 +384,7 @@ class PowerFactory2026LifecycleAdapter:
         except Exception:
             raise PowerFactory2026ProbeError("ComLdf Execute failed") from None
         if isinstance(return_code, bool) or not isinstance(return_code, int):
-            raise PowerFactory2026ProbeError(
-                "ComLdf Execute returned a non-integer status"
-            )
+            raise PowerFactory2026ProbeError("ComLdf Execute returned a non-integer status")
         if return_code != 0:
             raise PowerFactory2026ProbeError(
                 f"ComLdf Execute returned nonzero status {return_code}"
@@ -607,9 +597,7 @@ class PowerFactory2026LifecycleAdapter:
                 failures,
             )
 
-    def _deactivate_probe_context(
-        self, actions: list[str], failures: list[str]
-    ) -> None:
+    def _deactivate_probe_context(self, actions: list[str], failures: list[str]) -> None:
         if self._study_case_activated_by_probe and self._active_study_case is not None:
             _attempt_context_action(
                 self._active_study_case,
@@ -634,18 +622,14 @@ class PowerFactory2026LifecycleAdapter:
 
     def _require(self, stage: LifecycleStage) -> None:
         if stage not in self._completed:
-            raise PowerFactory2026ProbeError(
-                f"stage {stage.value} must complete before this stage"
-            )
+            raise PowerFactory2026ProbeError(f"stage {stage.value} must complete before this stage")
 
     def _environment_value(self, name: str | None) -> str | None:
         if name is None:
             return None
         value = self._environ.get(name)
         if value is None:
-            raise PowerFactory2026ProbeError(
-                f"required environment variable {name} is not set"
-            )
+            raise PowerFactory2026ProbeError(f"required environment variable {name} is not set")
         return value
 
     def _bounded_contents(self, folder: Any, query: str) -> list[Any]:
@@ -683,9 +667,7 @@ class PowerFactory2026LifecycleAdapter:
 def create_powerfactory2026_adapter() -> PowerFactory2026LifecycleAdapter:
     """Create the first-party adapter from POWERFACTORY_PROBE_CONFIG."""
 
-    return PowerFactory2026LifecycleAdapter(
-        PowerFactory2026ProbeConfig.from_environment()
-    )
+    return PowerFactory2026LifecycleAdapter(PowerFactory2026ProbeConfig.from_environment())
 
 
 def _load_powerfactory_module(path: str) -> ModuleType:
@@ -696,9 +678,7 @@ def _load_powerfactory_module(path: str) -> ModuleType:
     if existing is not None:
         existing_file = getattr(existing, "__file__", None)
         if existing_file is None or Path(existing_file).resolve() != requested:
-            raise PowerFactory2026ProbeError(
-                "a different powerfactory module is already loaded"
-            )
+            raise PowerFactory2026ProbeError("a different powerfactory module is already loaded")
         return existing
 
     spec = importlib.util.spec_from_file_location("powerfactory", requested)
@@ -719,9 +699,7 @@ def _load_powerfactory_module(path: str) -> ModuleType:
 def _required_call(target: Any, method_name: str, *args: Any) -> Any:
     method = getattr(target, method_name, None)
     if not callable(method):
-        raise PowerFactory2026ProbeError(
-            f"vendor object has no callable {method_name}"
-        )
+        raise PowerFactory2026ProbeError(f"vendor object has no callable {method_name}")
     try:
         return method(*args)
     except Exception:
@@ -834,14 +812,10 @@ def _numeric_result(value: Any, attribute: str) -> dict[str, Any]:
             f"result attribute {attribute} could not be read"
         ) from None
     if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
-        raise PowerFactory2026ProbeError(
-            f"result attribute {attribute} is not numeric"
-        )
+        raise PowerFactory2026ProbeError(f"result attribute {attribute} is not numeric")
     numeric_value = float(raw_value)
     if not math.isfinite(numeric_value):
-        raise PowerFactory2026ProbeError(
-            f"result attribute {attribute} is not finite"
-        )
+        raise PowerFactory2026ProbeError(f"result attribute {attribute} is not finite")
 
     unit: str | None = None
     get_unit = getattr(value, "GetAttributeUnit", None)

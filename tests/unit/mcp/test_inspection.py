@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from powerfactory_agent.mcp.configuration import configure_probe, create_installation
 from powerfactory_agent.mcp.inspection import run_active_project_inspection
@@ -89,7 +89,7 @@ class ActiveProjectInspectionTests(unittest.TestCase):
         self.assertIn("[REDACTED]", result["failure"]["message"])
         self.assertEqual(LifecycleStage.CLEANUP, adapter.calls[-1])
 
-    def test_non_active_selectors_are_rejected_before_adapter_creation(self) -> None:
+    def test_exact_configured_selectors_are_inspected(self) -> None:
         config_path = self.installation.log_file.parent / "powerfactory-agent.json"
         configure_probe(
             config_path,
@@ -107,8 +107,16 @@ class ActiveProjectInspectionTests(unittest.TestCase):
         from powerfactory_agent.mcp.configuration import load_installation
 
         exact_installation = load_installation(config_path)
-        with self.assertRaisesRegex(ValueError, "requires project and study case selectors"):
-            run_active_project_inspection(
-                exact_installation,
-                adapter_factory=lambda _: self.fail("adapter must not be created"),
-            )
+        adapter = StubInspectionAdapter()
+
+        result = run_active_project_inspection(
+            exact_installation,
+            adapter_factory=lambda config: (
+                adapter
+                if config.project_selector == "Project A" and config.study_case == "Case A"
+                else self.fail("configured selectors were not preserved")
+            ),
+        )
+
+        self.assertEqual("PASS", result["status"])
+        self.assertEqual(LifecycleStage.CLEANUP, adapter.calls[-1])

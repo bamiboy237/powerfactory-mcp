@@ -4,10 +4,11 @@ import math
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from powerfactory_agent.probes import (
     LifecycleProbeRunner,
@@ -171,9 +172,7 @@ class FakeApplication:
     def GetActiveStudyCase(self) -> FakeObject | None:
         return self.active_study_case
 
-    def GetCalcRelevantObjects(
-        self, query: str, include_out_of_service: bool
-    ) -> list[FakeObject]:
+    def GetCalcRelevantObjects(self, query: str, include_out_of_service: bool) -> list[FakeObject]:
         self.inventory_calls.append((query, include_out_of_service))
         return list(self.inventories[query.removeprefix("*.")])
 
@@ -277,20 +276,14 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
             if stage is not LifecycleStage.CLEANUP
         }
 
-        load_sample = evidence_by_stage[LifecycleStage.INVENTORY]["classes"][
-            "ElmLod"
-        ]["sample"]
+        load_sample = evidence_by_stage[LifecycleStage.INVENTORY]["classes"]["ElmLod"]["sample"]
         self.assertEqual([item["name"] for item in load_sample], ["Load A", "Load B"])
         self.assertEqual(
             evidence_by_stage[LifecycleStage.RESULTS]["terminal_voltage"]["unit"],
             "p.u.",
         )
-        self.assertEqual(
-            evidence_by_stage[LifecycleStage.RESULTS]["line_loading"]["unit"], "%"
-        )
-        self.assertFalse(
-            evidence_by_stage[LifecycleStage.IDENTITY]["stability_claimed"]
-        )
+        self.assertEqual(evidence_by_stage[LifecycleStage.RESULTS]["line_loading"]["unit"], "%")
+        self.assertFalse(evidence_by_stage[LifecycleStage.IDENTITY]["stability_claimed"])
         self.assertTrue(
             all(
                 item["read_only"]
@@ -393,8 +386,7 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
     def test_inventory_sample_limit_and_cardinality_ceiling(self) -> None:
         inventories = _default_inventories()
         inventories["ElmLod"] = [
-            FakeObject(f"Load {index}", "ElmLod", f"Grid/{index}.ElmLod")
-            for index in range(6)
+            FakeObject(f"Load {index}", "ElmLod", f"Grid/{index}.ElmLod") for index in range(6)
         ]
         adapter, _ = self.adapter(
             FakeApplication(inventories=inventories),
@@ -405,9 +397,7 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
 
         self.assertEqual(evidence.runs[0].failure_stage, LifecycleStage.INVENTORY)
         stage = next(
-            item
-            for item in evidence.runs[0].stages
-            if item.stage is LifecycleStage.INVENTORY
+            item for item in evidence.runs[0].stages if item.stage is LifecycleStage.INVENTORY
         )
         self.assertIn("exceeds ceiling 5", stage.error_message or "")
 
@@ -418,9 +408,7 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
 
         self.assertEqual(evidence.runs[0].failure_stage, LifecycleStage.LOAD_FLOW)
         stage = next(
-            item
-            for item in evidence.runs[0].stages
-            if item.stage is LifecycleStage.LOAD_FLOW
+            item for item in evidence.runs[0].stages if item.stage is LifecycleStage.LOAD_FLOW
         )
         self.assertIn("nonzero status 7", stage.error_message or "")
 
@@ -455,7 +443,9 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
         self.assertEqual(prior_project.activation_count, 1)
         self.assertEqual(prior_study_case.activation_count, 1)
 
-    def test_active_context_selection_observes_the_existing_context_without_activation(self) -> None:
+    def test_active_context_selection_observes_the_existing_context_without_activation(
+        self,
+    ) -> None:
         application = FakeApplication()
         application.active_project = application.projects[0]
         application.active_study_case = application.study_cases[0]
@@ -517,9 +507,7 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
 
         evidence = LifecycleProbeRunner(adapter).run()
 
-        self.assertEqual(
-            evidence.runs[0].failure_stage, LifecycleStage.ACTIVATE_STUDY_CASE
-        )
+        self.assertEqual(evidence.runs[0].failure_stage, LifecycleStage.ACTIVATE_STUDY_CASE)
         stage = next(
             item
             for item in evidence.runs[0].stages
@@ -544,9 +532,7 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
 
                 self.assertEqual(evidence.runs[0].failure_stage, LifecycleStage.RESULTS)
                 stage = next(
-                    item
-                    for item in evidence.runs[0].stages
-                    if item.stage is LifecycleStage.RESULTS
+                    item for item in evidence.runs[0].stages if item.stage is LifecycleStage.RESULTS
                 )
                 self.assertIn("is not finite", stage.error_message or "")
 
@@ -566,9 +552,7 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
         application = FakeApplication()
         adapter, _ = self.adapter(
             application,
-            config=replace(
-                self.config(), session_ownership=SessionOwnership.PRODUCT_OWNED
-            ),
+            config=replace(self.config(), session_ownership=SessionOwnership.PRODUCT_OWNED),
         )
         self._run_through_connect(adapter)
 
@@ -604,6 +588,31 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
                     "password": "not-allowed",
                 }
             )
+
+    def test_connection_failure_does_not_persist_vendor_error_text(self) -> None:
+        secret = "must-not-enter-evidence"
+        config = self.config(password_env_var="PF_PASSWORD")
+        module = FakePowerFactoryModule(FakeApplication())
+
+        def fail_connection(*_args: str) -> FakeApplication:
+            raise RuntimeError(f"vendor included {secret}")
+
+        module.GetApplicationExt = fail_connection  # type: ignore[method-assign]
+        adapter = PowerFactory2026LifecycleAdapter(
+            config,
+            module_loader=lambda _: module,
+            environ={"PF_PASSWORD": secret},
+        )
+
+        evidence = LifecycleProbeRunner(adapter).run()
+        failure = next(
+            stage
+            for stage in evidence.runs[0].stages
+            if stage.stage is LifecycleStage.CONNECT_APPLICATION
+        )
+
+        self.assertEqual("GetApplicationExt failed (RuntimeError)", failure.error_message)
+        self.assertNotIn(secret, str(evidence.to_dict()))
 
     @staticmethod
     def _run_through_connect(adapter: PowerFactory2026LifecycleAdapter) -> None:

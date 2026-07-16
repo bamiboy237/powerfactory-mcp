@@ -13,17 +13,18 @@ work at the same Git commit.
 
 ## Automated Install
 
-Open PowerFactory and activate the intended project and study case. Then open
-PowerShell:
+Close PowerFactory, then open PowerShell. The installer will ask for the exact
+non-confidential project and study-case names:
 
 ```powershell
-irm https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1 | iex
+$bootstrap = Join-Path $env:TEMP "powerfactory-mcp-bootstrap.ps1"; irm https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1 -OutFile $bootstrap; & $bootstrap
 ```
 
 The installer detects `PowerFactory 2026\Python\*\powerfactory.pyd`, creates a
-matching environment, configures a local MCP credential, observes the active
-PowerFactory context, runs the lifecycle probe twice, starts the loopback
-service, and registers it with Codex. It does not select another model.
+matching environment, configures a local MCP credential, activates only the
+exact project and study case entered by the engineer, runs each lifecycle probe
+in an isolated product-owned engine process, starts the loopback service, and
+registers it with Codex.
 
 Keep this PowerShell window open. Codex must be started from it so the MCP
 credential is inherited without being written into Codex configuration.

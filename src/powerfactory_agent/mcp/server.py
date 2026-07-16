@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hmac
 import json
 import logging
+from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -16,7 +17,6 @@ from starlette.responses import JSONResponse, Response
 
 from .configuration import McpInstallation, read_bearer_token
 from .engineering import EngineeringToolRuntime, build_engineering_runtime
-
 
 MCP_CONTRACT_VERSION = "mcp-operation-contracts/v0.1.0"
 _ALLOWED_ORIGINS = frozenset({"http://127.0.0.1", "http://localhost"})
@@ -36,14 +36,18 @@ class LocalBearerMiddleware(BaseHTTPMiddleware):
         authorization = request.headers.get("authorization", "")
         scheme, _, supplied_token = authorization.partition(" ")
         if scheme != "Bearer" or not hmac.compare_digest(supplied_token, self._bearer_token):
-            return _error_response("UNAUTHENTICATED", "valid bearer authentication is required", 401)
+            return _error_response(
+                "UNAUTHENTICATED", "valid bearer authentication is required", 401
+            )
         return await call_next(request)
 
 
 def create_server(
     installation: McpInstallation,
     *,
-    runtime_factory: Callable[[McpInstallation], EngineeringToolRuntime] = build_engineering_runtime,
+    runtime_factory: Callable[
+        [McpInstallation], EngineeringToolRuntime
+    ] = build_engineering_runtime,
 ) -> FastMCP:
     """Create the minimal real MCP product surface without fake model behavior."""
 
@@ -184,7 +188,7 @@ def create_server(
 
     @server.tool()
     def inspect_active_project() -> dict[str, object]:
-        """Inspect bounded component counts and samples in the already-active context."""
+        """Inspect bounded component counts and samples in the configured context."""
 
         from .inspection import run_active_project_inspection
 
@@ -199,7 +203,9 @@ def create_server(
         from .probe import run_connectivity_probe
 
         payload = run_connectivity_probe(installation, repeat)
-        logger.info("mcp.run_powerfactory_connectivity_probe status=%s", payload["probe_status"].lower())
+        logger.info(
+            "mcp.run_powerfactory_connectivity_probe status=%s", payload["probe_status"].lower()
+        )
         return payload
 
     return server
@@ -231,7 +237,9 @@ def _write_evidence(installation: McpInstallation, evidence: dict[str, object]) 
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     filename = datetime.now(timezone.utc).strftime("connectivity-%Y%m%dT%H%M%SZ.json")
     target = directory / filename
-    target.write_text(json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=True) + "\n", encoding="utf-8")
+    target.write_text(
+        json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
     return target
 
 

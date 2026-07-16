@@ -8,27 +8,28 @@ PowerFactory 2026. The friend-test release gives Codex real tools for:
 - real load-flow execution, persisted results, and result comparison;
 - a persisted supported-class topology graph with bounded queries.
 
-Active-project inspection loads the installed `powerfactory.pyd` and returns
-bounded counts and samples for loads, terminals, and lines without executing a
-calculation. The connectivity probe additionally executes the active study
-case's load flow and samples voltage/loading results while verifying the full
-PowerFactory lifecycle. Neither tool creates a sample network, chooses a
-project, changes model attributes, or falls back to a simulated engine.
+Configured-project inspection loads the installed `powerfactory.pyd`, activates
+only the exact configured project and study case in an isolated product-owned
+engine, and returns bounded counts and samples without executing a calculation.
+The connectivity probe additionally executes that study case's load flow and
+samples voltage/loading results while verifying the full lifecycle. Neither
+tool creates a sample network, changes model attributes, or falls back to a
+simulated engine.
 
 ## Install on Windows
 
-PowerFactory must be open with a safe project and study case active. Open
-PowerShell and run this single command:
+Close PowerFactory, open PowerShell, and run this single command. The installer
+will ask for the exact safe project and study-case names:
 
 ```powershell
-irm https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1 | iex
+$bootstrap = Join-Path $env:TEMP "powerfactory-mcp-bootstrap.ps1"; irm https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1 -OutFile $bootstrap; & $bootstrap
 ```
 
 The bootstrap downloads or updates the product. The guided installer then finds
 PowerFactory 2026, selects the matching Python runtime, creates the protected
-local MCP state and credential, runs the real probe twice, starts the loopback
-service, and registers it with Codex. It prints the exact protected launcher
-command to use when installation finishes.
+local MCP state and credential, starts an isolated product-owned external engine
+for each real probe, starts the loopback service, and registers it with Codex. It
+prints the exact protected launcher command to use when installation finishes.
 
 The installer requires `git`, `uv`, and the Codex CLI. It fails closed if it
 cannot find a compatible PowerFactory API, active context, valid licence, or a
