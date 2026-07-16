@@ -7,15 +7,17 @@ disabled until its evidence key is explicitly admitted by configuration.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation as DecimalInvalidOperation
 import importlib.util
 import math
 import os
 import platform
 import sys
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from decimal import Decimal
+from decimal import InvalidOperation as DecimalInvalidOperation
 from types import ModuleType
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 from uuid import uuid4
 
 from powerfactory_agent.domain import (
@@ -54,7 +56,6 @@ from powerfactory_agent.gateway.powerfactory2026 import (
     VendorResultRecord,
     VendorSession,
 )
-
 
 ModuleLoader = Callable[[str], ModuleType]
 IdFactory = Callable[[], str]
@@ -112,7 +113,9 @@ class NativePowerFactory2026Config:
                 raise ValueError(f"{field_name} must be non-empty")
         if not isinstance(self.accepted_mappings, frozenset):
             raise TypeError("accepted_mappings must be a frozenset")
-        if isinstance(self.cardinality_ceiling, bool) or not isinstance(self.cardinality_ceiling, int):
+        if isinstance(self.cardinality_ceiling, bool) or not isinstance(
+            self.cardinality_ceiling, int
+        ):
             raise TypeError("cardinality_ceiling must be an integer")
         if self.cardinality_ceiling < 1:
             raise ValueError("cardinality_ceiling must be positive")
@@ -153,13 +156,19 @@ class NativePowerFactory2026Vendor:
             self._config.installation_id,
             self._config.profile_id,
         ):
-            raise ConfigurationMismatch("session request does not match configured installation/profile")
+            raise ConfigurationMismatch(
+                "session request does not match configured installation/profile"
+            )
         actual_abi = sys.implementation.cache_tag or "unknown"
         actual_architecture = platform.machine()
         if actual_abi != self._config.expected_python_abi:
-            raise ConfigurationMismatch("running Python ABI does not match PowerFactory configuration")
+            raise ConfigurationMismatch(
+                "running Python ABI does not match PowerFactory configuration"
+            )
         if actual_architecture.casefold() != self._config.expected_architecture.casefold():
-            raise ConfigurationMismatch("running architecture does not match PowerFactory configuration")
+            raise ConfigurationMismatch(
+                "running architecture does not match PowerFactory configuration"
+            )
         module = self._module_loader(self._config.pyd_path)
         acquire = getattr(module, "GetApplicationExt", None)
         if not callable(acquire):
@@ -181,7 +190,9 @@ class NativePowerFactory2026Vendor:
         self._module = module
         self._application = application
         self._session_id = self._id_factory()
-        self._logs.append(VendorLogRecord(None, LogSeverity.INFO, "lifecycle", "native session attached"))
+        self._logs.append(
+            VendorLogRecord(None, LogSeverity.INFO, "lifecycle", "native session attached")
+        )
         return VendorSession(
             self._session_id,
             version,
@@ -224,9 +235,9 @@ class NativePowerFactory2026Vendor:
         if not self._activated_context:
             self._prior_project = _required_call(application, "GetActiveProject")
             self._prior_study_case = _required_call(application, "GetActiveStudyCase")
-        project_folder = _required_call(application, "GetProjectFolder", "prj")
+        user = _required_call(application, "GetCurrentUser")
         project = self._select_exact(
-            self._bounded(_required_call(project_folder, "GetContents", "*.IntPrj", 1), "projects"),
+            self._bounded(_required_call(user, "GetContents", "*.IntPrj", 1), "projects"),
             request.project_key,
             "project",
         )
@@ -234,7 +245,9 @@ class NativePowerFactory2026Vendor:
         _require_zero_status(result, "project activation")
         study_folder = _required_call(application, "GetProjectFolder", "study")
         study_case = self._select_exact(
-            self._bounded(_required_call(study_folder, "GetContents", "*.IntCase", 1), "study cases"),
+            self._bounded(
+                _required_call(study_folder, "GetContents", "*.IntCase", 1), "study cases"
+            ),
             request.study_case_key,
             "study case",
         )
@@ -242,7 +255,9 @@ class NativePowerFactory2026Vendor:
         current_scenario = _optional_call(application, "GetActiveScenario")
         if request.operational_scenario_key is None:
             if current_scenario is not None:
-                _require_zero_status(_required_call(current_scenario, "Deactivate"), "scenario deactivation")
+                _require_zero_status(
+                    _required_call(current_scenario, "Deactivate"), "scenario deactivation"
+                )
         else:
             scenario_folder = _required_call(application, "GetProjectFolder", "scen")
             scenario = self._select_exact(
@@ -270,7 +285,9 @@ class NativePowerFactory2026Vendor:
         for selector in request.object_classes:
             native_class = self._native_class(selector.kind)
             if request.scope is ObjectQueryScope.ACTIVE_GRIDS:
-                values = _required_call(application, "GetCalcRelevantObjects", f"*.{native_class}", True)
+                values = _required_call(
+                    application, "GetCalcRelevantObjects", f"*.{native_class}", True
+                )
             elif request.scope is ObjectQueryScope.ACTIVE_PROJECT:
                 project = _required_call(application, "GetActiveProject")
                 values = _required_call(project, "GetContents", f"*.{native_class}", 1)
@@ -303,8 +320,12 @@ class NativePowerFactory2026Vendor:
                     raise NativeMappingUnavailable("requested relationship mapping is unsupported")
                 self._require_mapping("relationship.connected_terminal")
                 for target in self._connected_terminals(value, selector.object_class.kind):
-                    target_class = type(selector.object_class)(ObjectClassKind.TERMINAL, selector.object_class.contract)
-                    relationships.append(RelationshipObservation(relationship, self._selector(target, target_class)))
+                    target_class = type(selector.object_class)(
+                        ObjectClassKind.TERMINAL, selector.object_class.contract
+                    )
+                    relationships.append(
+                        RelationshipObservation(relationship, self._selector(target, target_class))
+                    )
             records.append(
                 VendorDependencyRecord(
                     selector,
@@ -320,7 +341,9 @@ class NativePowerFactory2026Vendor:
             raise NativeMappingUnavailable("only the admitted ComLdf command is implemented")
         self._require_mapping("command.load_flow")
         if request.settings:
-            raise NativeMappingUnavailable("native load-flow settings lack accepted mapping evidence")
+            raise NativeMappingUnavailable(
+                "native load-flow settings lack accepted mapping evidence"
+            )
         command = _required_call(application, "GetFromStudyCase", "ComLdf")
         if command is None:
             raise ObjectNotFound("active study case has no ComLdf command")
@@ -334,7 +357,9 @@ class NativePowerFactory2026Vendor:
                 execution_id,
                 LogSeverity.INFO if return_code == 0 else LogSeverity.ERROR,
                 "load_flow",
-                "ComLdf completed" if return_code == 0 else f"ComLdf failed with status {return_code}",
+                "ComLdf completed"
+                if return_code == 0
+                else f"ComLdf failed with status {return_code}",
             )
         )
         return VendorCommandOutcome(execution_id, return_code, ())
@@ -359,7 +384,9 @@ class NativePowerFactory2026Vendor:
         diagnostics: list[str] = []
         try:
             if self._activated_context and self._prior_project is not None:
-                _require_zero_status(_required_call(self._prior_project, "Activate"), "project restoration")
+                _require_zero_status(
+                    _required_call(self._prior_project, "Activate"), "project restoration"
+                )
                 diagnostics.append("prior project restored")
                 if self._prior_study_case is not None:
                     _require_zero_status(
@@ -405,32 +432,54 @@ class NativePowerFactory2026Vendor:
     def _read_result(self, value: Any, variable: Any) -> ResultCell:
         mapping = _RESULTS.get(variable.kind)
         if mapping is None:
-            return ResultCell(variable, ResultCellStatus.UNSUPPORTED, None, None, None, "mapping unavailable")
+            return ResultCell(
+                variable, ResultCellStatus.UNSUPPORTED, None, None, None, "mapping unavailable"
+            )
         self._require_mapping(f"result.{variable.kind.value}")
         native_name, required_unit = mapping
         try:
             raw = _read_attribute(value, native_name)
         except NativeMappingUnavailable:
-            return ResultCell(variable, ResultCellStatus.MISSING, None, None, None, "result unavailable")
+            return ResultCell(
+                variable, ResultCellStatus.MISSING, None, None, None, "result unavailable"
+            )
         unit = _attribute_unit(value, native_name)
         if unit != required_unit:
-            return ResultCell(variable, ResultCellStatus.UNSUPPORTED, None, None, None, "unit mapping unavailable")
+            return ResultCell(
+                variable, ResultCellStatus.UNSUPPORTED, None, None, None, "unit mapping unavailable"
+            )
         try:
             numeric = _decimal(raw, native_name)
         except InvalidOperation:
-            if isinstance(raw, (int, float)) and not isinstance(raw, bool) and not math.isfinite(float(raw)):
-                return ResultCell(variable, ResultCellStatus.NON_FINITE, str(raw), unit, None, "non-finite result")
-            return ResultCell(variable, ResultCellStatus.MISSING, None, None, None, "result is not numeric")
-        return ResultCell(variable, ResultCellStatus.AVAILABLE, str(numeric), unit, Quantity(numeric, unit), None)
+            if (
+                isinstance(raw, (int, float))
+                and not isinstance(raw, bool)
+                and not math.isfinite(float(raw))
+            ):
+                return ResultCell(
+                    variable, ResultCellStatus.NON_FINITE, str(raw), unit, None, "non-finite result"
+                )
+            return ResultCell(
+                variable, ResultCellStatus.MISSING, None, None, None, "result is not numeric"
+            )
+        return ResultCell(
+            variable, ResultCellStatus.AVAILABLE, str(numeric), unit, Quantity(numeric, unit), None
+        )
 
     def _resolve(self, selector: PrimitiveObjectSelector) -> Any:
-        if selector.project_key != _object_key(_required_call(self._required_application(), "GetActiveProject")):
+        if selector.project_key != _object_key(
+            _required_call(self._required_application(), "GetActiveProject")
+        ):
             raise ConfigurationMismatch("selector project does not match active project")
         if selector.native_field is not None:
-            raise NativeMappingUnavailable("native locator fields are not accepted for PowerFactory 2026")
+            raise NativeMappingUnavailable(
+                "native locator fields are not accepted for PowerFactory 2026"
+            )
         native_class = self._native_class(selector.object_class.kind)
         values = self._bounded(
-            _required_call(self._required_application(), "GetCalcRelevantObjects", f"*.{native_class}", True),
+            _required_call(
+                self._required_application(), "GetCalcRelevantObjects", f"*.{native_class}", True
+            ),
             "selector resolution",
         )
         matches = [item for item in values if selector.canonical_path == _object_key(item)]
@@ -453,7 +502,9 @@ class NativePowerFactory2026Vendor:
     def _connected_terminals(self, value: Any, kind: ObjectClassKind) -> tuple[Any, ...]:
         paths = _CONNECTED_TERMINAL_PATHS.get(kind)
         if paths is None:
-            raise NativeMappingUnavailable("connected-terminal mapping is unsupported for object class")
+            raise NativeMappingUnavailable(
+                "connected-terminal mapping is unsupported for object class"
+            )
         targets: list[Any] = []
         for path in paths:
             current = value
@@ -518,7 +569,9 @@ class NativePowerFactory2026Vendor:
             return None
         value = self._environ.get(name)
         if value is None:
-            raise ConfigurationMismatch("required PowerFactory profile environment value is unavailable")
+            raise ConfigurationMismatch(
+                "required PowerFactory profile environment value is unavailable"
+            )
         return value
 
 
@@ -557,7 +610,9 @@ def _read_attribute(value: Any, attribute: str) -> Any:
         try:
             return method(attribute)
         except Exception:
-            raise NativeMappingUnavailable(f"native attribute is unavailable: {attribute}") from None
+            raise NativeMappingUnavailable(
+                f"native attribute is unavailable: {attribute}"
+            ) from None
     try:
         return getattr(value, attribute)
     except Exception:

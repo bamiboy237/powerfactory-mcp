@@ -277,8 +277,8 @@ class PowerFactory2026LifecycleAdapter:
                 "selection_mode": "active_context",
                 "validation_status": _UNVALIDATED,
             }
-        folder = _required_call(application, "GetProjectFolder", "prj")
-        candidates = self._bounded_contents(folder, "*.IntPrj")
+        user = _required_call(application, "GetCurrentUser")
+        candidates = self._bounded_contents(user, "*.IntPrj")
         selected = self._select_exact(candidates, self._config.project_selector, "project")
         activate_project = getattr(application, "ActivateProject", None)
         if not callable(activate_project):
@@ -435,6 +435,7 @@ class PowerFactory2026LifecycleAdapter:
                     "GetActiveStudyCase",
                     "GetAttributeUnit",
                     "GetCalcRelevantObjects",
+                    "GetCurrentUser",
                     "GetFromStudyCase",
                     "GetProjectFolder",
                     "PostCommand",

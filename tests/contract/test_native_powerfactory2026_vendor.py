@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import platform
 import sys
-from types import ModuleType
 import unittest
+from datetime import datetime, timezone
+from types import ModuleType
 
 from powerfactory_agent.domain import (
     AttributeKind,
@@ -13,6 +13,7 @@ from powerfactory_agent.domain import (
     CommandKind,
     CommandSelector,
     ConfigurationKey,
+    ContextActivationRequest,
     DependencyReadRequest,
     ObjectClassKind,
     ObjectClassSelector,
@@ -34,14 +35,15 @@ from powerfactory_agent.gateway import (
     PowerFactoryGateway2026,
 )
 
-
 NOW = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
 CONTRACT = VersionedName("native-test", "v1")
 KEY = ConfigurationKey(f"configuration-key:v1:sha256:{'a' * 64}")
 
 
 class NativeObject:
-    def __init__(self, name: str, class_name: str, path: str, attributes=None, units=None, parent=None):
+    def __init__(
+        self, name: str, class_name: str, path: str, attributes=None, units=None, parent=None
+    ):
         self.loc_name = name
         self._class_name = class_name
         self._path = path
@@ -75,8 +77,10 @@ class NativeObject:
 class NativeFolder:
     def __init__(self, values):
         self.values = values
+        self.calls = []
 
     def GetContents(self, pattern, recursive):
+        self.calls.append((pattern, recursive))
         suffix = pattern.removeprefix("*.")
         return [item for item in self.values if item.GetClassName() == suffix]
 
@@ -92,19 +96,25 @@ class NativeApplication:
         self.study = NativeObject("Study", "IntCase", "Project/Study.IntCase")
         self.grid = NativeObject("Grid", "ElmNet", "Project/Grid.ElmNet")
         self.terminal = NativeObject(
-            "Bus A", "ElmTerm", "Project/Grid/Bus A.ElmTerm",
+            "Bus A",
+            "ElmTerm",
+            "Project/Grid/Bus A.ElmTerm",
             {"outserv": 0, "uknom": 110, "m:u": 1.01},
             {"uknom": "kV", "m:u": "p.u."},
         )
-        cubic = NativeObject("Cubicle", "StaCubic", "Project/Grid/Cubicle.StaCubic", {"cterm": self.terminal})
+        cubic = NativeObject(
+            "Cubicle", "StaCubic", "Project/Grid/Cubicle.StaCubic", {"cterm": self.terminal}
+        )
         self.load = NativeObject(
-            "Load A", "ElmLod", "Project/Grid/Load A.ElmLod",
+            "Load A",
+            "ElmLod",
+            "Project/Grid/Load A.ElmLod",
             {"outserv": 0, "plini": 10, "qlini": 2, "bus1": cubic},
             {"plini": "MW", "qlini": "Mvar"},
         )
         self.command = NativeCommand()
+        self.current_user = NativeFolder([self.project])
         self.folders = {
-            "prj": NativeFolder([self.project]),
             "study": NativeFolder([self.study]),
             "scen": NativeFolder([]),
         }
@@ -126,7 +136,12 @@ class NativeApplication:
 
     def GetCalcRelevantObjects(self, pattern, include_out_of_service):
         suffix = pattern.removeprefix("*.")
-        return [item for item in (self.grid, self.terminal, self.load) if item.GetClassName() == suffix]
+        return [
+            item for item in (self.grid, self.terminal, self.load) if item.GetClassName() == suffix
+        ]
+
+    def GetCurrentUser(self):
+        return self.current_user
 
     def GetProjectFolder(self, name):
         return self.folders[name]
@@ -179,6 +194,14 @@ class NativePowerFactory2026VendorTests(unittest.TestCase):
         self.load_class = ObjectClassSelector(ObjectClassKind.LOAD, CONTRACT)
         self.terminal_class = ObjectClassSelector(ObjectClassKind.TERMINAL, CONTRACT)
 
+    def test_context_activation_discovers_projects_from_current_user(self) -> None:
+        observation = self.gateway.activate_context(
+            ContextActivationRequest("Project.IntPrj", "Project/Study.IntCase", None)
+        )
+
+        self.assertTrue(observation.context.verified)
+        self.assertEqual(self.application.current_user.calls, [("*.IntPrj", 1)])
+
     def test_active_context_inventory_and_dependencies_are_real_boundary_reads(self) -> None:
         self.assertTrue(self.context.verified)
         power = AttributeSelector(AttributeKind.ACTIVE_POWER, CONTRACT)
@@ -205,7 +228,10 @@ class NativePowerFactory2026VendorTests(unittest.TestCase):
             )
         )
         self.assertTrue(dependencies.complete)
-        self.assertEqual(ObjectClassKind.TERMINAL, dependencies.objects[0].relationships[0].target.object_class.kind)
+        self.assertEqual(
+            ObjectClassKind.TERMINAL,
+            dependencies.objects[0].relationships[0].target.object_class.kind,
+        )
 
     def test_grid_inventory_does_not_invent_an_outserv_attribute(self) -> None:
         grid = ObjectClassSelector(ObjectClassKind.GRID, CONTRACT)

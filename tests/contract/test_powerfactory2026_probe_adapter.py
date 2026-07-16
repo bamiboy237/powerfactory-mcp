@@ -125,8 +125,8 @@ class FakeApplication:
             )
             for index, name in enumerate(study_case_names)
         ]
+        self.current_user = FakeFolder(self.projects)
         self.folders = {
-            "prj": FakeFolder(self.projects),
             "study": FakeFolder(self.study_cases),
         }
         self.inventories = dict(inventories or _default_inventories())
@@ -151,6 +151,9 @@ class FakeApplication:
     def _clear_active_project(self, value: FakeObject) -> None:
         if self.active_project is value:
             self.active_project = None
+
+    def GetCurrentUser(self) -> FakeFolder:
+        return self.current_user
 
     def GetProjectFolder(self, folder_name: str) -> FakeFolder:
         return self.folders[folder_name]
@@ -328,6 +331,7 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
         ):
             adapter.execute_stage(stage)
 
+        self.assertEqual(application.current_user.calls, [("*.IntPrj", 1)])
         self.assertEqual(application.activate_project_calls, ["Project A"])
 
     def test_connection_always_uses_three_arguments_and_formats_ini(self) -> None:
