@@ -489,6 +489,25 @@ class PowerFactory2026AdapterContractTests(unittest.TestCase):
         self.assertEqual(prior_project.deactivation_count, 0)
         self.assertEqual(application.projects[0].deactivation_count, 0)
 
+    def test_study_case_already_activated_with_project_is_not_activated_twice(self) -> None:
+        application = FakeApplication(study_case_activation_return_code=1)
+        adapter, _ = self.adapter(application)
+
+        for stage in (
+            LifecycleStage.ENVIRONMENT,
+            LifecycleStage.IMPORT_MODULE,
+            LifecycleStage.CONNECT_APPLICATION,
+            LifecycleStage.ACTIVATE_PROJECT,
+        ):
+            adapter.execute_stage(stage)
+        application.active_study_case = application.study_cases[0]
+
+        evidence = adapter.execute_stage(LifecycleStage.ACTIVATE_STUDY_CASE)
+
+        self.assertFalse(evidence["activation_performed"])
+        self.assertEqual(application.study_cases[0].activation_count, 0)
+        self.assertIs(application.active_study_case, application.study_cases[0])
+
     def test_nonzero_study_case_activation_is_failure_and_selected_case_is_not_deactivated(
         self,
     ) -> None:

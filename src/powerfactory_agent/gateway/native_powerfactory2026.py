@@ -251,7 +251,13 @@ class NativePowerFactory2026Vendor:
             request.study_case_key,
             "study case",
         )
-        _require_zero_status(_required_call(study_case, "Activate"), "study-case activation")
+        active_study_case = _required_call(application, "GetActiveStudyCase")
+        if active_study_case is None or _object_key(active_study_case) != _object_key(
+            study_case
+        ):
+            _require_zero_status(
+                _required_call(study_case, "Activate"), "study-case activation"
+            )
         current_scenario = _optional_call(application, "GetActiveScenario")
         if request.operational_scenario_key is None:
             if current_scenario is not None:

@@ -318,23 +318,27 @@ class PowerFactory2026LifecycleAdapter:
         folder = _required_call(application, "GetProjectFolder", "study")
         candidates = self._bounded_contents(folder, "*.IntCase")
         selected = self._select_exact(candidates, self._config.study_case, "study case")
-        activate = getattr(selected, "Activate", None)
-        if not callable(activate):
-            raise PowerFactory2026ProbeError("study case has no callable Activate")
-        try:
-            return_code = activate()
-        except Exception:
-            raise PowerFactory2026ProbeError("study-case activation failed") from None
-        _ensure_activation_succeeded(return_code, "study case")
         active = _required_call(application, "GetActiveStudyCase")
+        activation_performed = active is None or not _same_locator(active, selected)
+        if activation_performed:
+            activate = getattr(selected, "Activate", None)
+            if not callable(activate):
+                raise PowerFactory2026ProbeError("study case has no callable Activate")
+            try:
+                return_code = activate()
+            except Exception:
+                raise PowerFactory2026ProbeError("study-case activation failed") from None
+            _ensure_activation_succeeded(return_code, "study case")
+            active = _required_call(application, "GetActiveStudyCase")
         if active is None or not _same_locator(active, selected):
             raise PowerFactory2026ProbeError(
                 "active study case does not match the exact selected study case"
             )
         self._active_study_case = active
-        self._study_case_activated_by_probe = True
+        self._study_case_activated_by_probe = activation_performed
         return {
             "active_study_case": _object_summary(active),
+            "activation_performed": activation_performed,
             "candidate_count": len(candidates),
             "exact_match_verified": True,
             "validation_status": _UNVALIDATED,

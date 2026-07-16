@@ -50,6 +50,7 @@ class NativeObject:
         self._attributes = dict(attributes or {})
         self._units = dict(units or {})
         self._parent = parent
+        self.activation_count = 0
 
     def GetFullName(self):
         return self._path
@@ -71,6 +72,7 @@ class NativeObject:
         return self._parent
 
     def Activate(self):
+        self.activation_count += 1
         return 0
 
 
@@ -201,6 +203,7 @@ class NativePowerFactory2026VendorTests(unittest.TestCase):
 
         self.assertTrue(observation.context.verified)
         self.assertEqual(self.application.current_user.calls, [("*.IntPrj", 1)])
+        self.assertEqual(self.application.study.activation_count, 0)
 
     def test_active_context_inventory_and_dependencies_are_real_boundary_reads(self) -> None:
         self.assertTrue(self.context.verified)
