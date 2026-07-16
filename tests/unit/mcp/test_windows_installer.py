@@ -83,11 +83,11 @@ def test_installer_keeps_token_out_of_codex_config_and_persistent_environment() 
         source.index("function Set-PrivateStateAcl") : source.index("function Test-McpInitialize")
     ]
     assert re.search(r"icacls.*?/inheritance:r", acl_function, flags=re.DOTALL | re.IGNORECASE)
+    assert '"/grant" "*${currentSid}:F" "/T" "/C" "/Q"' in acl_function
     assert "Get-ChildItem -LiteralPath $Directory -Force -Recurse" in acl_function
     assert 'if ($target.PSIsContainer) { "(OI)(CI)F" } else { "F" }' in acl_function
     assert '"/remove:g" $identity' in acl_function
-    assert '"/T"' not in acl_function
-    assert '"/C"' not in acl_function
+    assert '"*${currentSid}:$rights"' in acl_function
     assert "Unexpected accounts retain access" in source
 
 

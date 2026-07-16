@@ -118,6 +118,13 @@ function Set-PrivateStateAcl {
 
     $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $allowedSids = @($currentSid, "S-1-5-18")
+
+    & $IcaclsPath $Directory "/grant" "*${currentSid}:F" "/T" "/C" "/Q" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Install "credential protection" "Windows could not restore access to the existing state directory $Directory." `
+            "Run PowerShell as the engineer account that created this installation, then rerun the installer."
+    }
+
     $aclTargets = @((Get-Item -LiteralPath $Directory)) + @(
         Get-ChildItem -LiteralPath $Directory -Force -Recurse | Sort-Object { $_.FullName.Length }
     )
