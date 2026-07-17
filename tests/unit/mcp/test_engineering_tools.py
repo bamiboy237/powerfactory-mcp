@@ -47,6 +47,11 @@ class RecordingEngineeringRuntime:
         self.calls.append(("close", {}))
 
 
+class FailingEngineeringRuntime(RecordingEngineeringRuntime):
+    def get_model_context(self):
+        raise RuntimeError("native exception text must not reach the client")
+
+
 def test_engineering_tool_catalog_is_registered_without_eager_runtime_start() -> None:
     with tempfile.TemporaryDirectory() as directory:
         installation = create_installation(Path(directory) / "agent")
@@ -123,4 +128,58 @@ def test_engineering_tools_share_one_lazy_runtime_and_forward_bounded_arguments(
                     "hops": 1,
                 },
             ),
+        ]
+
+
+def test_component_request_rejection_does_not_start_the_native_runtime() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        installation = create_installation(Path(directory) / "agent")
+        starts = 0
+
+        def factory(_):
+            nonlocal starts
+            starts += 1
+            return RecordingEngineeringRuntime()
+
+        server = create_server(installation, runtime_factory=factory)
+
+        unsupported = asyncio.run(
+            server.call_tool("list_components", {"asset_kind": "generator", "limit": 50})
+        )[1]
+        invalid_limit = asyncio.run(
+            server.call_tool("list_components", {"asset_kind": "terminal", "limit": 10_000})
+        )[1]
+
+        assert starts == 0
+        assert unsupported["error"]["code"] == "INVALID_ARGUMENT"
+        assert "supported kinds: area, terminal, line, load, transformer" in unsupported["error"]["message"]
+        assert invalid_limit["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_runtime_tool_failure_returns_a_safe_error_and_keeps_tools_available() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        installation = create_installation(Path(directory) / "agent")
+        starts = 0
+
+        def factory(_):
+            nonlocal starts
+            starts += 1
+            return FailingEngineeringRuntime()
+
+        server = create_server(installation, runtime_factory=factory)
+
+        failed = asyncio.run(server.call_tool("get_model_context", {}))[1]
+        status = asyncio.run(server.call_tool("get_session_status", {}))[1]
+
+        assert failed["status"] == "ERROR"
+        assert failed["error"]["code"] == "ENGINEERING_TOOL_FAILED"
+        assert "native exception text" not in str(failed)
+        assert starts == 1
+        assert status["service"] == "powerfactory-agent"
+        assert status["admitted_component_asset_kinds"] == [
+            "area",
+            "terminal",
+            "line",
+            "load",
+            "transformer",
         ]

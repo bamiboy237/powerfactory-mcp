@@ -43,8 +43,10 @@ In the new Codex thread:
 1. Call `get_session_status` and save the registered tool list.
 2. Call `inspect_active_project` and confirm it reports the intended active
    project/study case plus bounded `ElmLod`, `ElmTerm`, and `ElmLne` inventory.
-3. Call `get_model_context`, then `list_components` for `terminal`, `line`,
-   `load`, and `transformer`. Save one returned product identity.
+3. First call `list_components` with `{"asset_kind":"terminal","limit":100}`.
+   This is the persistent-runtime retry. If it succeeds, call `get_model_context`,
+   then list `area`, `line`, `load`, and `transformer`; save one returned product
+   identity. `generator` is not admitted in this friend-test release.
 4. Call `get_asset_context` with that identity.
 5. Call `refresh_model_graph`, `get_model_graph_summary`, and
    `query_model_graph` with `query_kind: components` using the returned context
@@ -69,6 +71,9 @@ Return:
 - `%LOCALAPPDATA%\PowerFactoryAgent\evidence\connectivity-*.json`
 - `%LOCALAPPDATA%\PowerFactoryAgent\evidence\inspection-*.json`
 
+- `runtime-failure-*.json` from the configured state directory's `evidence`
+  folder, if the persistent-runtime retry fails
+
 Before sending files, inspect and redact customer names, local user paths, and
 confidential model details. Never send `mcp-token`, PowerFactory credentials,
 licence material, or a customer model. Preserve lifecycle stage names, return
@@ -77,9 +82,11 @@ codes, versions, counts, and error categories needed to diagnose a failure.
 ## Failure Handoff
 
 Do not change the script, Python version, selected model, or PowerFactory
-settings just to make a failed run pass. Return the failure evidence and the
-exact manual deviation attempted. A structured `FAIL` is useful product
-feedback; it is not a simulated result.
+settings just to make a failed run pass. If the endpoint becomes unavailable
+after the terminal inventory call, return the last operation ID and the sanitized
+runtime-failure evidence; do not retry by starting another PowerFactory process.
+Return the exact manual deviation attempted. A structured `FAIL` is useful
+product feedback; it is not a simulated result.
 
 ## Current Surface
 

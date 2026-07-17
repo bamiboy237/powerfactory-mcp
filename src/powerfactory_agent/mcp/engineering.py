@@ -5,6 +5,19 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from .configuration import McpInstallation
+from .component_catalog import ADMITTED_COMPONENT_ASSET_KINDS
+
+
+def validate_component_list_request(*, asset_kind: str, limit: int) -> None:
+    """Reject unsupported inventory requests before starting the native runtime."""
+
+    if asset_kind not in ADMITTED_COMPONENT_ASSET_KINDS:
+        supported = ", ".join(ADMITTED_COMPONENT_ASSET_KINDS)
+        raise ValueError(
+            f"asset_kind '{asset_kind}' is unavailable in this release; supported kinds: {supported}"
+        )
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError("limit must be an integer between 1 and 100")
 
 
 @runtime_checkable
@@ -62,4 +75,9 @@ def build_engineering_runtime(installation: McpInstallation) -> EngineeringToolR
     return PowerFactoryEngineeringRuntime(installation)
 
 
-__all__ = ["EngineeringToolRuntime", "build_engineering_runtime"]
+__all__ = [
+    "ADMITTED_COMPONENT_ASSET_KINDS",
+    "EngineeringToolRuntime",
+    "build_engineering_runtime",
+    "validate_component_list_request",
+]

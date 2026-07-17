@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import os
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +17,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from .configuration import McpInstallation, read_bearer_token
-from .engineering import EngineeringToolRuntime, build_engineering_runtime
+from .engineering import (
+    ADMITTED_COMPONENT_ASSET_KINDS,
+    EngineeringToolRuntime,
+    build_engineering_runtime,
+    validate_component_list_request,
+)
 
 MCP_CONTRACT_VERSION = "mcp-operation-contracts/v0.1.0"
 _ALLOWED_ORIGINS = frozenset({"http://127.0.0.1", "http://localhost"})
@@ -71,6 +77,28 @@ def create_server(
             runtime = runtime_factory(installation)
         return runtime
 
+    def run_engineering_tool(name: str, operation: Callable[[], dict[str, object]]) -> dict[str, object]:
+        """Contain ordinary Python tool exceptions without claiming native crash isolation."""
+
+        try:
+            return operation()
+        except ValueError as exc:
+            logger.info("mcp.%s rejected_request exception_type=%s", name, type(exc).__name__)
+            return _tool_error("INVALID_ARGUMENT", str(exc))
+        except Exception as exc:
+            diagnostic = getattr(exc, "diagnostic", None)
+            logger.error("mcp.%s failed exception_type=%s", name, type(exc).__name__)
+            if isinstance(diagnostic, dict):
+                return _tool_error(
+                    "RUNTIME_OPERATION_FAILED",
+                    "PowerFactory operation requires investigation; diagnostic evidence was persisted.",
+                    diagnostic=diagnostic,
+                )
+            return _tool_error(
+                "ENGINEERING_TOOL_FAILED",
+                "The MCP server handled this tool exception; native host crashes require process isolation.",
+            )
+
     @server.tool()
     def get_session_status() -> dict[str, object]:
         """Return local service configuration status; never starts PowerFactory."""
@@ -81,6 +109,8 @@ def create_server(
             "transport": "streamable-http",
             "endpoint": installation.endpoint_url,
             "powerfactory_probe_configured": installation.probe_config_file is not None,
+            "mcp_process": {"pid": os.getpid(), "alive": True},
+            "admitted_component_asset_kinds": list(ADMITTED_COMPONENT_ASSET_KINDS),
             "registered_tools": [
                 "compare_results",
                 "get_asset_context",
@@ -104,7 +134,7 @@ def create_server(
     def get_model_context() -> dict[str, object]:
         """Return the verified active PowerFactory context and persisted extraction binding."""
 
-        return engineering_runtime().get_model_context()
+        return run_engineering_tool("get_model_context", lambda: engineering_runtime().get_model_context())
 
     @server.tool()
     def list_components(
@@ -114,29 +144,42 @@ def create_server(
     ) -> dict[str, object]:
         """List a bounded page of identified components from the active model."""
 
-        return engineering_runtime().list_components(
-            asset_kind=asset_kind,
-            limit=limit,
-            cursor=cursor,
+        return run_engineering_tool(
+            "list_components",
+            lambda: _list_components(
+                engineering_runtime,
+                asset_kind=asset_kind,
+                limit=limit,
+                cursor=cursor,
+            ),
         )
 
     @server.tool()
     def get_asset_context(product_identity: str) -> dict[str, object]:
         """Return verified locator, attributes, and topology evidence for one product UUID."""
 
-        return engineering_runtime().get_asset_context(product_identity=product_identity)
+        return run_engineering_tool(
+            "get_asset_context",
+            lambda: engineering_runtime().get_asset_context(product_identity=product_identity),
+        )
 
     @server.tool()
     def run_validated_load_flow(idempotency_key: str) -> dict[str, object]:
         """Run and persist a bounded load flow for the verified active model context."""
 
-        return engineering_runtime().run_validated_load_flow(idempotency_key=idempotency_key)
+        return run_engineering_tool(
+            "run_validated_load_flow",
+            lambda: engineering_runtime().run_validated_load_flow(idempotency_key=idempotency_key),
+        )
 
     @server.tool()
     def get_calculation_run(run_id: str) -> dict[str, object]:
         """Return one immutable persisted calculation run and its result reference."""
 
-        return engineering_runtime().get_calculation_run(run_id=run_id)
+        return run_engineering_tool(
+            "get_calculation_run",
+            lambda: engineering_runtime().get_calculation_run(run_id=run_id),
+        )
 
     @server.tool()
     def compare_results(
@@ -145,22 +188,27 @@ def create_server(
     ) -> dict[str, object]:
         """Compare two immutable result snapshots from the same verified context and policy."""
 
-        return engineering_runtime().compare_results(
-            baseline_snapshot_id=baseline_snapshot_id,
-            candidate_snapshot_id=candidate_snapshot_id,
+        return run_engineering_tool(
+            "compare_results",
+            lambda: engineering_runtime().compare_results(
+                baseline_snapshot_id=baseline_snapshot_id,
+                candidate_snapshot_id=candidate_snapshot_id,
+            ),
         )
 
     @server.tool()
     def refresh_model_graph() -> dict[str, object]:
         """Persist a bounded graph of supported classes and report known coverage gaps."""
 
-        return engineering_runtime().refresh_model_graph()
+        return run_engineering_tool("refresh_model_graph", lambda: engineering_runtime().refresh_model_graph())
 
     @server.tool()
     def get_model_graph_summary() -> dict[str, object]:
         """Return the latest persisted topology revision and extraction counts."""
 
-        return engineering_runtime().get_model_graph_summary()
+        return run_engineering_tool(
+            "get_model_graph_summary", lambda: engineering_runtime().get_model_graph_summary()
+        )
 
     @server.tool()
     def query_model_graph(
@@ -175,15 +223,18 @@ def create_server(
     ) -> dict[str, object]:
         """Run a bounded components, neighborhood, or impact query on persisted topology."""
 
-        return engineering_runtime().query_model_graph(
-            query_kind=query_kind,
-            model_context_id=model_context_id,
-            extraction_revision=extraction_revision,
-            limit=limit,
-            center_identity=center_identity,
-            source_identity=source_identity,
-            target_identity=target_identity,
-            hops=hops,
+        return run_engineering_tool(
+            "query_model_graph",
+            lambda: engineering_runtime().query_model_graph(
+                query_kind=query_kind,
+                model_context_id=model_context_id,
+                extraction_revision=extraction_revision,
+                limit=limit,
+                center_identity=center_identity,
+                source_identity=source_identity,
+                target_identity=target_identity,
+                hops=hops,
+            ),
         )
 
     @server.tool()
@@ -211,10 +262,14 @@ def create_server(
     return server
 
 
-def build_asgi_app(installation: McpInstallation) -> Any:
+def build_asgi_app(
+    installation: McpInstallation,
+    *,
+    runtime_factory: Callable[[McpInstallation], EngineeringToolRuntime] = build_engineering_runtime,
+) -> Any:
     """Build the authenticated ASGI endpoint used by uvicorn."""
 
-    server = create_server(installation)
+    server = create_server(installation, runtime_factory=runtime_factory)
     application = server.streamable_http_app()
     application.add_middleware(LocalBearerMiddleware, bearer_token=read_bearer_token(installation))
     return application
@@ -251,3 +306,30 @@ def _error_response(code: str, message: str, status_code: int) -> JSONResponse:
         },
         status_code=status_code,
     )
+
+
+def _list_components(
+    runtime_factory: Callable[[], EngineeringToolRuntime],
+    *,
+    asset_kind: str,
+    limit: int,
+    cursor: str | None,
+) -> dict[str, object]:
+    validate_component_list_request(asset_kind=asset_kind, limit=limit)
+    return runtime_factory().list_components(asset_kind=asset_kind, limit=limit, cursor=cursor)
+
+
+def _tool_error(
+    code: str,
+    message: str,
+    *,
+    diagnostic: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": "ERROR",
+        "contract_version": MCP_CONTRACT_VERSION,
+        "error": {"code": code, "message": message},
+    }
+    if diagnostic is not None:
+        payload["diagnostic"] = diagnostic
+    return payload

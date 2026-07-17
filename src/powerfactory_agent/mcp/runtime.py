@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import json
+import os
 import platform
 import sys
 import time
@@ -70,7 +72,11 @@ from powerfactory_agent.domain import (
     SessionStartRequest,
     VersionedName,
 )
-from powerfactory_agent.gateway import PowerFactoryGateway2026, SerializedPowerFactoryOwner
+from powerfactory_agent.gateway import (
+    OperationResultUnavailableError,
+    PowerFactoryGateway2026,
+    SerializedPowerFactoryOwner,
+)
 from powerfactory_agent.gateway.native_powerfactory2026 import (
     NativePowerFactory2026Config,
     NativePowerFactory2026Vendor,
@@ -88,24 +94,14 @@ from powerfactory_agent.persistence import (
 from powerfactory_agent.serialization import canonical_digest, to_primitive
 
 from .configuration import McpInstallation, load_probe_config
+from .component_catalog import SUPPORTED_CLASS_ASSET_KINDS, SUPPORTED_OBJECT_CLASSES
+from .engineering import validate_component_list_request
 
 
 _CONTRACT = VersionedName("powerfactory-2026-candidate-mapping", "0.1.0-unvalidated")
 _DEPENDENCIES = DependencySetIdentity("powerfactory-model-inventory", "1")
-_SUPPORTED_CLASSES = (
-    ObjectClassKind.GRID,
-    ObjectClassKind.TERMINAL,
-    ObjectClassKind.LINE,
-    ObjectClassKind.LOAD,
-    ObjectClassKind.TRANSFORMER,
-)
-_KIND_MAP = {
-    ObjectClassKind.GRID: AssetKind.AREA,
-    ObjectClassKind.TERMINAL: AssetKind.TERMINAL,
-    ObjectClassKind.LINE: AssetKind.LINE,
-    ObjectClassKind.LOAD: AssetKind.LOAD,
-    ObjectClassKind.TRANSFORMER: AssetKind.TRANSFORMER,
-}
+_SUPPORTED_CLASSES = SUPPORTED_OBJECT_CLASSES
+_KIND_MAP = dict(SUPPORTED_CLASS_ASSET_KINDS)
 _ATTRIBUTES = (
     AttributeSelector(AttributeKind.DISPLAY_NAME, _CONTRACT),
     AttributeSelector(AttributeKind.NOMINAL_VOLTAGE, _CONTRACT),
@@ -121,6 +117,14 @@ _ATTRIBUTES_BY_CLASS = {
 }
 _CONNECTED_TERMINAL = RelationshipSelector(RelationshipKind.CONNECTED_TERMINAL, _CONTRACT)
 _UNSUPPORTED_TOPOLOGY = ("ElmCoup switches", "ElmTr3 three-winding transformers")
+
+
+class RuntimeOperationFailure(RuntimeError):
+    """Sanitized failure with a durable evidence reference for an unavailable operation."""
+
+    def __init__(self, diagnostic: dict[str, object]) -> None:
+        super().__init__("PowerFactory operation requires investigation; see diagnostic evidence")
+        self.diagnostic = diagnostic
 
 
 class PowerFactoryEngineeringRuntime:
@@ -195,12 +199,8 @@ class PowerFactoryEngineeringRuntime:
         )
 
     def list_components(self, *, asset_kind: str, limit: int, cursor: str | None) -> dict[str, object]:
-        try:
-            kind = AssetKind(asset_kind)
-        except ValueError as exc:
-            raise ValueError(f"unsupported asset_kind: {asset_kind}") from exc
-        if not 1 <= limit <= 100:
-            raise ValueError("limit must be between 1 and 100")
+        validate_component_list_request(asset_kind=asset_kind, limit=limit)
+        kind = AssetKind(asset_kind)
         offset = 0 if cursor is None else self._decode_cursor(cursor)
         assets = [item.asset for item in self._ensure_snapshot().assets if item.asset.asset_kind is kind]
         page = assets[offset:offset + limit]
@@ -618,9 +618,66 @@ class PowerFactoryEngineeringRuntime:
         while time.monotonic() < deadline:
             status = self._owner.status(operation_id)
             if status.terminal:
-                return self._owner.completed_result(operation_id, result_type)
+                try:
+                    return self._owner.completed_result(operation_id, result_type)
+                except OperationResultUnavailableError as exc:
+                    raise RuntimeOperationFailure(self._persist_operation_failure(exc)) from exc
             time.sleep(0.005)
-        raise TimeoutError(f"PowerFactory operation timed out: {operation_id}")
+        raise RuntimeOperationFailure(self._persist_timeout(operation_id))
+
+    def _persist_operation_failure(
+        self,
+        exc: OperationResultUnavailableError,
+    ) -> dict[str, object]:
+        record = exc.record
+        error = record.error if isinstance(record.error, dict) else {}
+        return self._persist_runtime_diagnostic(
+            {
+                "operation_id": record.operation_id,
+                "handler": record.handler_name,
+                "state": record.state.value,
+                "exception_category": self._safe_classification(error.get("category")),
+                "exception_type": self._safe_classification(error.get("exception_type")),
+            }
+        )
+
+    def _persist_timeout(self, operation_id: str) -> dict[str, object]:
+        return self._persist_runtime_diagnostic(
+            {
+                "operation_id": operation_id,
+                "handler": "unavailable",
+                "state": "CLIENT_WAIT_TIMEOUT",
+                "exception_category": "client_wait_timeout",
+                "exception_type": "TimeoutError",
+            }
+        )
+
+    def _persist_runtime_diagnostic(self, operation: dict[str, str]) -> dict[str, object]:
+        evidence_id = (
+            f"runtime-failure-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
+            f"{operation['operation_id']}.json"
+        )
+        diagnostic: dict[str, object] = {
+            "schema_version": "powerfactory-runtime-diagnostic/v1",
+            "evidence_id": evidence_id,
+            "operation": operation,
+            "owner": self._owner.diagnostics(),
+            "mcp_process": {"pid": os.getpid(), "alive": True},
+        }
+        directory = self._installation.log_file.parent / "evidence"
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        (directory / evidence_id).write_text(
+            json.dumps(diagnostic, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
+        return diagnostic
+
+    @staticmethod
+    def _safe_classification(value: object) -> str:
+        if not isinstance(value, str):
+            return "unavailable"
+        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
+        return value if 0 < len(value) <= 128 and set(value) <= allowed else "unavailable"
 
     @staticmethod
     def _decode_cursor(cursor: str) -> int:
@@ -639,4 +696,4 @@ class PowerFactoryEngineeringRuntime:
         }
 
 
-__all__ = ["PowerFactoryEngineeringRuntime"]
+__all__ = ["PowerFactoryEngineeringRuntime", "RuntimeOperationFailure"]

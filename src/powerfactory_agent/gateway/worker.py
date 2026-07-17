@@ -141,6 +141,18 @@ class SerializedOperationWorker:
         with self._state_lock:
             return self._stopping
 
+    def diagnostics(self) -> dict[str, bool | str | None]:
+        """Return safe process-local state without exposing gateway handles."""
+
+        with self._state_lock:
+            return {
+                "quarantined": self._quarantined,
+                "stopping": self._stopping,
+                "active_operation_id": self._active_operation_id,
+                "owner_thread_alive": self._owner_thread.is_alive(),
+                "watchdog_thread_alive": self._watchdog_thread.is_alive(),
+            }
+
     def submit(self, request: OperationRequest, *, wait: bool = True) -> OperationRecord:
         if not isinstance(request, OperationRequest):
             raise TypeError("request must be OperationRequest")

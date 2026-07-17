@@ -171,6 +171,11 @@ class SerializedPowerFactoryOwner:
     def quarantined(self) -> bool:
         return self._worker.quarantined
 
+    def diagnostics(self) -> dict[str, bool | str | None]:
+        """Return sanitized owner liveness for operational evidence."""
+
+        return self._worker.diagnostics()
+
     def submit_start(
         self,
         request: SessionStartRequest,
