@@ -18,22 +18,24 @@ simulated engine.
 
 ## Install on Windows
 
-Close PowerFactory, open PowerShell, and run this single command. The installer
-will ask for the exact safe project and study-case names:
+Close PowerFactory, open PowerShell, and run this single command:
 
 ```powershell
 $bootstrap = Join-Path $env:TEMP "powerfactory-mcp-bootstrap.ps1"; irm https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1 -OutFile $bootstrap; & $bootstrap
 ```
 
-The bootstrap downloads or updates the product. The guided installer then finds
-PowerFactory 2026, selects the matching Python runtime, creates the protected
-local MCP state and credential, starts an isolated product-owned external engine
-for each real probe, starts the loopback service, and registers it with Codex. It
-prints the exact protected launcher command to use when installation finishes.
+The bootstrap stages each install in a unique managed attempt and validates the
+PowerFactory ABI plus authenticated loopback MCP health without acquiring the
+engine. During cutover it drains only the previously owned service, performs a
+disposable acquisition probe, and atomically promotes the new release; a failed
+cutover restarts the previous release. Installation does not select or persist a project or study case;
+after launching Codex, use `open_project_context` to discover choices and then
+explicitly confirm the exact project/study case for that MCP process.
 
 The installer requires `git`, `uv`, and the Codex CLI. It fails closed if it
-cannot find a compatible PowerFactory API, active context, valid licence, or a
-working Codex installation.
+cannot find a compatible PowerFactory API, valid licence, or a working Codex
+installation. Failed attempts retain only a sanitized transaction report under
+`%LOCALAPPDATA%\PowerFactoryMCP\failure-reports`.
 
 ## Engineer Test
 

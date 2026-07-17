@@ -40,6 +40,9 @@ class McpTransportTests(unittest.TestCase):
 
     def test_authenticated_listener_stays_available_after_an_ordinary_runtime_exception(self) -> None:
         class FailingRuntime:
+            def activate_context(self, **_):
+                return {"status": "OK"}
+
             def get_model_context(self):
                 raise RuntimeError("native exception text must not reach the client")
 
@@ -74,12 +77,31 @@ class McpTransportTests(unittest.TestCase):
                 self.assertEqual(200, initialized.status_code)
                 headers["mcp-session-id"] = initialized.headers["mcp-session-id"]
 
-                failed = client.post(
+                admitted = client.post(
                     "/mcp",
                     headers=headers,
                     json={
                         "jsonrpc": "2.0",
                         "id": 2,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "open_project_context",
+                            "arguments": {
+                                "project_selector": "Project A",
+                                "study_case": "Case A",
+                                "confirmed": True,
+                            },
+                        },
+                    },
+                )
+                self.assertEqual(200, admitted.status_code)
+
+                failed = client.post(
+                    "/mcp",
+                    headers=headers,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 3,
                         "method": "tools/call",
                         "params": {"name": "get_model_context", "arguments": {}},
                     },
@@ -96,7 +118,7 @@ class McpTransportTests(unittest.TestCase):
                     headers=headers,
                     json={
                         "jsonrpc": "2.0",
-                        "id": 3,
+                        "id": 4,
                         "method": "tools/call",
                         "params": {"name": "get_session_status", "arguments": {}},
                     },

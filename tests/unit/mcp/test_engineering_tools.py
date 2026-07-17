@@ -19,6 +19,9 @@ class RecordingEngineeringRuntime:
     def get_model_context(self):
         return self._call("get_model_context")
 
+    def activate_context(self, **values):
+        return self._call("activate_context", **values)
+
     def list_components(self, **values):
         return self._call("list_components", **values)
 
@@ -73,11 +76,12 @@ def test_engineering_tool_catalog_is_registered_without_eager_runtime_start() ->
             "refresh_model_graph",
             "get_model_graph_summary",
             "query_model_graph",
+            "open_project_context",
         } <= names
         assert starts == []
 
 
-def test_engineering_tools_share_one_lazy_runtime_and_forward_bounded_arguments() -> None:
+def test_contextual_tools_do_not_start_powerfactory_before_explicit_context_admission() -> None:
     with tempfile.TemporaryDirectory() as directory:
         installation = create_installation(Path(directory) / "agent")
         runtime = RecordingEngineeringRuntime()
@@ -88,7 +92,47 @@ def test_engineering_tools_share_one_lazy_runtime_and_forward_bounded_arguments(
             starts += 1
             return runtime
 
-        server = create_server(installation, runtime_factory=factory)
+        server = create_server(
+            installation,
+            runtime_factory=factory,
+            context_discovery=lambda _, project: {
+                "status": "PASS",
+                "projects": [{"name": project or "Project A"}],
+                "study_cases": [{"name": "Case A"}] if project else [],
+            },
+        )
+
+        blocked = asyncio.run(
+            server.call_tool("list_components", {"asset_kind": "line", "limit": 20, "cursor": None})
+        )[1]
+        assert blocked["error"]["code"] == "CONTEXT_REQUIRED"
+        assert starts == 0
+
+        choices = asyncio.run(server.call_tool("open_project_context", {}))[1]
+        assert choices["status"] == "CONTEXT_REQUIRED"
+        assert choices["candidates"]["projects"] == [{"name": "Project A"}]
+
+        confirmation = asyncio.run(
+            server.call_tool(
+                "open_project_context",
+                {"project_selector": "Project A", "study_case": "Case A"},
+            )
+        )[1]
+        assert confirmation["status"] == "CONFIRMATION_REQUIRED"
+        assert starts == 0
+
+        admitted = asyncio.run(
+            server.call_tool(
+                "open_project_context",
+                {
+                    "project_selector": "Project A",
+                    "study_case": "Case A",
+                    "confirmed": True,
+                },
+            )
+        )[1]
+        assert admitted["operation"] == "activate_context"
+        assert starts == 1
 
         asyncio.run(
             server.call_tool(
@@ -114,6 +158,10 @@ def test_engineering_tools_share_one_lazy_runtime_and_forward_bounded_arguments(
 
         assert starts == 1
         assert runtime.calls == [
+            (
+                "activate_context",
+                {"project_selector": "Project A", "study_case": "Case A"},
+            ),
             ("list_components", {"asset_kind": "line", "limit": 20, "cursor": None}),
             (
                 "query_model_graph",
@@ -131,17 +179,49 @@ def test_engineering_tools_share_one_lazy_runtime_and_forward_bounded_arguments(
         ]
 
 
+def test_disposable_legacy_tools_are_not_allowed_to_start_a_second_engine() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        installation = create_installation(Path(directory) / "agent")
+        server = create_server(installation)
+
+        inspection = asyncio.run(server.call_tool("inspect_active_project", {}))[1]
+        connectivity = asyncio.run(
+            server.call_tool("run_powerfactory_connectivity_probe", {"repeat": 2})
+        )[1]
+
+        assert inspection["error"]["code"] == "ENGINE_OPERATION_UNAVAILABLE"
+        assert connectivity["error"]["code"] == "ENGINE_OPERATION_UNAVAILABLE"
+
+
 def test_component_request_rejection_does_not_start_the_native_runtime() -> None:
     with tempfile.TemporaryDirectory() as directory:
         installation = create_installation(Path(directory) / "agent")
         starts = 0
+        runtime = RecordingEngineeringRuntime()
 
         def factory(_):
             nonlocal starts
             starts += 1
-            return RecordingEngineeringRuntime()
+            return runtime
 
         server = create_server(installation, runtime_factory=factory)
+
+        blocked = asyncio.run(
+            server.call_tool("list_components", {"asset_kind": "generator", "limit": 50})
+        )[1]
+        assert blocked["error"]["code"] == "CONTEXT_REQUIRED"
+        assert starts == 0
+
+        asyncio.run(
+            server.call_tool(
+                "open_project_context",
+                {
+                    "project_selector": "Project A",
+                    "study_case": "Case A",
+                    "confirmed": True,
+                },
+            )
+        )
 
         unsupported = asyncio.run(
             server.call_tool("list_components", {"asset_kind": "generator", "limit": 50})
@@ -150,10 +230,12 @@ def test_component_request_rejection_does_not_start_the_native_runtime() -> None
             server.call_tool("list_components", {"asset_kind": "terminal", "limit": 10_000})
         )[1]
 
-        assert starts == 0
+        assert starts == 1
         assert unsupported["error"]["code"] == "INVALID_ARGUMENT"
-        assert "supported kinds: area, terminal, line, load, transformer" in unsupported["error"]["message"]
         assert invalid_limit["error"]["code"] == "INVALID_ARGUMENT"
+        assert runtime.calls == [
+            ("activate_context", {"project_selector": "Project A", "study_case": "Case A"})
+        ]
 
 
 def test_runtime_tool_failure_returns_a_safe_error_and_keeps_tools_available() -> None:
@@ -172,9 +254,8 @@ def test_runtime_tool_failure_returns_a_safe_error_and_keeps_tools_available() -
         status = asyncio.run(server.call_tool("get_session_status", {}))[1]
 
         assert failed["status"] == "ERROR"
-        assert failed["error"]["code"] == "ENGINEERING_TOOL_FAILED"
-        assert "native exception text" not in str(failed)
-        assert starts == 1
+        assert failed["error"]["code"] == "CONTEXT_REQUIRED"
+        assert starts == 0
         assert status["service"] == "powerfactory-agent"
         assert status["admitted_component_asset_kinds"] == [
             "area",

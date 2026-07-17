@@ -131,6 +131,7 @@ class PowerFactoryEngineeringRuntime:
     """One lazily-created real session shared by all engineering MCP tools."""
 
     def __init__(self, installation: McpInstallation) -> None:
+        self._installation = installation
         probe = load_probe_config(installation)
         state_dir = installation.log_file.parent
         database = SQLiteDatabase(state_dir / "powerfactory-agent.sqlite3")
@@ -180,6 +181,7 @@ class PowerFactoryEngineeringRuntime:
         self._installation_id = installation_id
         self._profile_id = profile_id
         self._probe = probe
+        self._context: ContextObservation | None = None
         self._session = self._await(
             self._owner.submit_start(
                 SessionStartRequest(installation_id, profile_id, "2026", "configured", True),
@@ -187,7 +189,25 @@ class PowerFactoryEngineeringRuntime:
             ),
             SessionObservation,
         )
-        self._context = self._activate_or_inspect()
+    def activate_context(self, *, project_selector: str, study_case: str) -> dict[str, object]:
+        """Activate and verify the explicitly admitted project context for this process only."""
+
+        if not project_selector.strip() or not study_case.strip():
+            raise ValueError("project_selector and study_case must be non-empty")
+        if self._context is not None:
+            raise ValueError("an active PowerFactory context already exists for this MCP session")
+        activated = self._await(
+            self._owner.submit_activate_context(
+                ContextActivationRequest(project_selector, study_case, None),
+                idempotency_key=f"context-activate:{uuid4()}",
+            ),
+            ContextActivationObservation,
+        )
+        context = activated.context
+        if not context.verified or context.configuration_key is None or context.project_key is None:
+            raise RuntimeError("PowerFactory has no verified active project, study case, and grid context")
+        self._context = context
+        return self._response("verified-context-admission", context=to_primitive(context))
 
     def get_model_context(self) -> dict[str, object]:
         snapshot = self._ensure_snapshot()
@@ -334,36 +354,24 @@ class PowerFactoryEngineeringRuntime:
         finally:
             self._owner.shutdown_serialization(timeout_ms=5_000)
 
-    def _activate_or_inspect(self) -> ContextObservation:
-        if self._probe.project_selector == "@active" and self._probe.study_case == "@active":
-            context = self._await(
-                self._owner.submit_inspect_context(idempotency_key=f"context-inspect:{uuid4()}"),
-                ContextObservation,
-            )
-        else:
-            activated = self._await(
-                self._owner.submit_activate_context(
-                    ContextActivationRequest(self._probe.project_selector, self._probe.study_case, None),
-                    idempotency_key=f"context-activate:{uuid4()}",
-                ),
-                ContextActivationObservation,
-            )
-            context = activated.context
-        if not context.verified or context.configuration_key is None or context.project_key is None:
-            raise RuntimeError("PowerFactory has no verified active project, study case, and grid context")
-        return context
+    def _require_context(self) -> ContextObservation:
+        if self._context is None:
+            raise ValueError("CONTEXT_REQUIRED: call open_project_context with an exact confirmed project and study case")
+        return self._context
 
     def _ensure_snapshot(self) -> GraphSnapshot:
+        context = self._require_context()
         try:
-            return self._graph_store.latest(expected_configuration_key=self._context.configuration_key.value)
+            return self._graph_store.latest(expected_configuration_key=context.configuration_key.value)
         except GraphSnapshotNotFoundError:
             snapshot = self._extract_snapshot()
             return self._graph.full_refresh(snapshot)
 
     def _extract_snapshot(self) -> GraphSnapshot:
+        active_context = self._require_context()
         records = self._query_all_objects()
         try:
-            prior = self._graph_store.latest(expected_configuration_key=self._context.configuration_key.value)
+            prior = self._graph_store.latest(expected_configuration_key=active_context.configuration_key.value)
             context_id = prior.context.model_context_id
             counter = prior.context.extraction_revision.counter + 1
         except GraphSnapshotNotFoundError:
@@ -398,7 +406,7 @@ class PowerFactoryEngineeringRuntime:
         relationships = self._extract_relationships(assets_by_selector)
         ordered_assets = tuple(sorted(assets_by_selector.values(), key=lambda item: item.product_identity.value))
         fingerprint_value = canonical_digest(
-            {"configuration_key": self._context.configuration_key, "assets": ordered_assets},
+            {"configuration_key": active_context.configuration_key, "assets": ordered_assets},
             kind="live-state-fingerprint",
         )
         fingerprint = LiveStateFingerprint(fingerprint_value)
@@ -416,7 +424,7 @@ class PowerFactoryEngineeringRuntime:
             FreshnessLevel.VERIFIED,
             now,
             self._session.session_id,
-            self._context.configuration_key,
+            active_context.configuration_key,
             _DEPENDENCIES,
             evidence_reference,
             "supported-class-inventory",
@@ -425,7 +433,7 @@ class PowerFactoryEngineeringRuntime:
         )
         context = ModelContext(
             context_id,
-            self._context.configuration_key,
+            active_context.configuration_key,
             self._session.powerfactory_version,
             ordered_assets,
             ExtractionRevision(context_id, counter),
@@ -474,12 +482,13 @@ class PowerFactoryEngineeringRuntime:
         )
 
     def _query_all_objects(self) -> tuple[ObjectObservation, ...]:
+        context = self._require_context()
         records: list[ObjectObservation] = []
         for object_class in _SUPPORTED_CLASSES:
             cursor = None
             while True:
                 request = ObjectQueryRequest(
-                    self._context.configuration_key,
+                    context.configuration_key,
                     ObjectQueryScope.ACTIVE_GRIDS,
                     OutOfServicePolicy.EXCLUDE,
                     (ObjectClassSelector(object_class, _CONTRACT),),
@@ -501,6 +510,7 @@ class PowerFactoryEngineeringRuntime:
         self,
         assets: dict[PrimitiveObjectSelector, AssetReference],
     ) -> tuple[GraphRelationship, ...]:
+        context = self._require_context()
         equipment = [
             selector for selector in assets
             if selector.object_class.kind in {ObjectClassKind.LINE, ObjectClassKind.LOAD, ObjectClassKind.TRANSFORMER}
@@ -511,7 +521,7 @@ class PowerFactoryEngineeringRuntime:
             observation = self._await(
                 self._owner.submit_observe_dependencies(
                     DependencyReadRequest(
-                        self._context.configuration_key,
+                        context.configuration_key,
                         selected,
                         (),
                         (_CONNECTED_TERMINAL,),

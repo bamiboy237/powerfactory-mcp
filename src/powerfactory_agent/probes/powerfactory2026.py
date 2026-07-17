@@ -45,8 +45,8 @@ class PowerFactory2026ProbeConfig:
 
     pyd_path: str
     python_version: str
-    project_selector: str
-    study_case: str
+    project_selector: str | None = None
+    study_case: str | None = None
     sample_limit: int = 10
     cardinality_ceiling: int = 10_000
     include_out_of_service: bool = False
@@ -60,10 +60,14 @@ class PowerFactory2026ProbeConfig:
             raise ValueError("pyd_path must name powerfactory.pyd")
         if not _PYTHON_VERSION.fullmatch(self.python_version):
             raise ValueError("python_version must use major.minor form")
-        if not self.project_selector.strip():
-            raise ValueError("project_selector must be non-empty")
-        if not self.study_case.strip():
-            raise ValueError("study_case must be non-empty")
+        if (self.project_selector is None) != (self.study_case is None):
+            raise ValueError("project_selector and study_case must be configured together")
+        for field_name, value in (
+            ("project_selector", self.project_selector),
+            ("study_case", self.study_case),
+        ):
+            if value is not None and not value.strip():
+                raise ValueError(f"{field_name} must be non-empty when configured")
         if isinstance(self.sample_limit, bool) or self.sample_limit < 1:
             raise ValueError("sample_limit must be a positive integer")
         if isinstance(self.cardinality_ceiling, bool) or self.cardinality_ceiling < 1:
@@ -184,6 +188,38 @@ class PowerFactory2026LifecycleAdapter:
         self._completed.add(stage)
         return evidence
 
+    def discover_context_candidates(self, project_selector: str | None) -> Mapping[str, Any]:
+        """Return bounded project or study-case choices without persisting a context choice."""
+
+        self.execute_stage(LifecycleStage.ENVIRONMENT)
+        self.execute_stage(LifecycleStage.IMPORT_MODULE)
+        self.execute_stage(LifecycleStage.CONNECT_APPLICATION)
+        application = self._application_required()
+        user = _required_call(application, "GetCurrentUser")
+        projects = self._bounded_contents(user, "*.IntPrj")[:100]
+        if project_selector is None:
+            return {
+                "projects": tuple(_object_summary(project) for project in projects),
+                "study_cases": (),
+            }
+        if not project_selector.strip():
+            raise ValueError("project_selector must be non-empty when supplied")
+        selected = self._select_exact(projects, project_selector, "project")
+        self._prior_project = _required_call(application, "GetActiveProject")
+        _ensure_activation_succeeded(
+            _required_call(application, "ActivateProject", _object_key(selected)), "project"
+        )
+        self._active_project = _required_call(application, "GetActiveProject")
+        if _object_key(self._active_project) != _object_key(selected):
+            raise PowerFactory2026ProbeError("active project does not match the selected project")
+        self._project_activated_by_probe = True
+        study_folder = _required_call(application, "GetProjectFolder", "study")
+        study_cases = self._bounded_contents(study_folder, "*.IntCase")[:100]
+        return {
+            "projects": ( _object_summary(selected), ),
+            "study_cases": tuple(_object_summary(case) for case in study_cases),
+        }
+
     def _environment(self) -> Mapping[str, Any]:
         if self._application is not None or self._module is not None:
             raise PowerFactory2026ProbeError(
@@ -264,6 +300,8 @@ class PowerFactory2026LifecycleAdapter:
 
     def _activate_project(self) -> Mapping[str, Any]:
         self._require(LifecycleStage.CONNECT_APPLICATION)
+        if self._config.project_selector is None:
+            raise PowerFactory2026ProbeError("project context has not been selected")
         application = self._application_required()
         self._prior_project = _required_call(application, "GetActiveProject")
         self._prior_study_case = _required_call(application, "GetActiveStudyCase")
@@ -304,6 +342,8 @@ class PowerFactory2026LifecycleAdapter:
 
     def _activate_study_case(self) -> Mapping[str, Any]:
         self._require(LifecycleStage.ACTIVATE_PROJECT)
+        if self._config.study_case is None:
+            raise PowerFactory2026ProbeError("study case context has not been selected")
         application = self._application_required()
         if self._config.study_case == _ACTIVE_CONTEXT:
             active = self._prior_study_case

@@ -7,6 +7,10 @@ import os
 from pathlib import Path
 import secrets
 import stat
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -97,11 +101,9 @@ def configure_probe(
     installation = load_installation(installation_path)
     probe = PowerFactory2026ProbeConfig.from_mapping(values)
     target = Path(installation_path).expanduser().resolve().parent / "powerfactory-probe.json"
-    _write_json(target, {
+    payload: dict[str, object] = {
         "pyd_path": probe.pyd_path,
         "python_version": probe.python_version,
-        "project_selector": probe.project_selector,
-        "study_case": probe.study_case,
         "sample_limit": probe.sample_limit,
         "cardinality_ceiling": probe.cardinality_ceiling,
         "include_out_of_service": probe.include_out_of_service,
@@ -109,7 +111,11 @@ def configure_probe(
         "ini_path": probe.ini_path,
         "user_profile_env_var": probe.user_profile_env_var,
         "password_env_var": probe.password_env_var,
-    })
+    }
+    if probe.project_selector is not None:
+        payload["project_selector"] = probe.project_selector
+        payload["study_case"] = probe.study_case
+    _write_json(target, payload)
     updated = installation.model_copy(update={"probe_config_file": target})
     _write_json(Path(installation_path).expanduser().resolve(), updated.model_dump(mode="json"))
     return target
@@ -129,6 +135,55 @@ def load_probe_config(installation: McpInstallation) -> PowerFactory2026ProbeCon
     return PowerFactory2026ProbeConfig.from_json_file(installation.probe_config_file)
 
 
+@contextmanager
+def contextual_installation(
+    installation: McpInstallation,
+    *,
+    project_selector: str,
+    study_case: str,
+) -> Iterator[McpInstallation]:
+    """Provide a temporary probe file for one explicit context without saving a default."""
+
+    if installation.probe_config_file is None:
+        raise ValueError("PowerFactory installation settings are not configured")
+    source = json.loads(installation.probe_config_file.read_text(encoding="utf-8"))
+    if not isinstance(source, dict):
+        raise ValueError("PowerFactory installation settings must be a JSON object")
+    source.update({"project_selector": project_selector, "study_case": study_case})
+    with tempfile.TemporaryDirectory(prefix="powerfactory-context-") as directory:
+        target = Path(directory) / "powerfactory-probe.json"
+        _write_json(target, source)
+        yield installation.model_copy(update={"probe_config_file": target})
+
+
+def append_context_history(installation: McpInstallation, context: dict[str, str]) -> None:
+    """Append a selected context audit record; it is never consulted for startup activation."""
+
+    if set(context) != {"project_selector", "study_case"}:
+        raise ValueError("context history requires exact project and study case selectors")
+    record = {
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "project_selector": context["project_selector"],
+        "study_case": context["study_case"],
+    }
+    path = installation.log_file.parent / "context-history.jsonl"
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, sort_keys=True, ensure_ascii=True) + "\n")
+    _restrict_permissions(path)
+
+
+def count_context_history(installation: McpInstallation) -> int:
+    """Count readable history records without interpreting them as a current context."""
+
+    path = installation.log_file.parent / "context-history.jsonl"
+    if not path.is_file():
+        return 0
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    except OSError:
+        return 0
+
+
 def _installation_path(state_dir: Path) -> Path:
     return state_dir / "powerfactory-agent.json"
 
@@ -145,8 +200,6 @@ def _write_probe_template(path: Path) -> None:
     _write_json(path, {
         "pyd_path": r"C:\\Program Files\\DIgSILENT\\PowerFactory 2026\\Python\\3.12\\powerfactory.pyd",
         "python_version": "3.12",
-        "project_selector": "REPLACE_WITH_EXACT_PROJECT",
-        "study_case": "REPLACE_WITH_EXACT_STUDY_CASE",
         "sample_limit": 10,
         "cardinality_ceiling": 10000,
         "include_out_of_service": False,

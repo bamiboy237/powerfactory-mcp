@@ -16,13 +16,20 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from .configuration import McpInstallation, read_bearer_token
+from .configuration import (
+    McpInstallation,
+    append_context_history,
+    contextual_installation,
+    count_context_history,
+    read_bearer_token,
+)
 from .engineering import (
     ADMITTED_COMPONENT_ASSET_KINDS,
     EngineeringToolRuntime,
     build_engineering_runtime,
     validate_component_list_request,
 )
+from .inspection import discover_context_candidates
 
 MCP_CONTRACT_VERSION = "mcp-operation-contracts/v0.1.0"
 _ALLOWED_ORIGINS = frozenset({"http://127.0.0.1", "http://localhost"})
@@ -54,6 +61,7 @@ def create_server(
     runtime_factory: Callable[
         [McpInstallation], EngineeringToolRuntime
     ] = build_engineering_runtime,
+    context_discovery: Callable[[McpInstallation, str | None], dict[str, Any]] | None = None,
 ) -> FastMCP:
     """Create the minimal real MCP product surface without fake model behavior."""
 
@@ -61,8 +69,8 @@ def create_server(
     server = FastMCP(
         "powerfactory-agent",
         instructions=(
-            "Safe PowerFactory MCP engineering service. Read active context, inventory, "
-            "calculations, and bounded persisted topology. No mutation tools are registered."
+            "Safe PowerFactory MCP engineering service. Call open_project_context before "
+            "project-dependent reads, calculations, or topology. No mutation tools are registered."
         ),
         host=installation.host,
         port=installation.port,
@@ -70,6 +78,14 @@ def create_server(
         json_response=True,
     )
     runtime: EngineeringToolRuntime | None = None
+    active_context: dict[str, str] | None = None
+    context_history: list[dict[str, str]] = []
+    historical_context_count = count_context_history(installation)
+    discover = context_discovery or (
+        lambda selected_installation, project: discover_context_candidates(
+            selected_installation, project_selector=project
+        )
+    )
 
     def engineering_runtime() -> EngineeringToolRuntime:
         nonlocal runtime
@@ -99,6 +115,16 @@ def create_server(
                 "The MCP server handled this tool exception; native host crashes require process isolation.",
             )
 
+    def run_contextual_tool(
+        name: str, operation: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        if active_context is None:
+            return _tool_error(
+                "CONTEXT_REQUIRED",
+                "Call open_project_context with an exact confirmed project and study case first.",
+            )
+        return run_engineering_tool(name, operation)
+
     @server.tool()
     def get_session_status() -> dict[str, object]:
         """Return local service configuration status; never starts PowerFactory."""
@@ -109,6 +135,9 @@ def create_server(
             "transport": "streamable-http",
             "endpoint": installation.endpoint_url,
             "powerfactory_probe_configured": installation.probe_config_file is not None,
+            "context_state": "ACTIVE" if active_context is not None else "CONTEXT_REQUIRED",
+            "active_context": active_context,
+            "context_history_count": historical_context_count + len(context_history),
             "mcp_process": {"pid": os.getpid(), "alive": True},
             "admitted_component_asset_kinds": list(ADMITTED_COMPONENT_ASSET_KINDS),
             "registered_tools": [
@@ -120,6 +149,7 @@ def create_server(
                 "get_session_status",
                 "inspect_active_project",
                 "list_components",
+                "open_project_context",
                 "query_model_graph",
                 "refresh_model_graph",
                 "run_powerfactory_connectivity_probe",
@@ -131,10 +161,64 @@ def create_server(
         return payload
 
     @server.tool()
+    def open_project_context(
+        project_selector: str | None = None,
+        study_case: str | None = None,
+        confirmed: bool = False,
+    ) -> dict[str, object]:
+        """Discover bounded choices or explicitly admit one exact PowerFactory project context."""
+
+        nonlocal active_context
+        if project_selector is not None and not project_selector.strip():
+            return _tool_error("INVALID_ARGUMENT", "project_selector must be non-empty when supplied")
+        if study_case is not None and not study_case.strip():
+            return _tool_error("INVALID_ARGUMENT", "study_case must be non-empty when supplied")
+        if project_selector is None or study_case is None or not confirmed:
+            try:
+                candidates = discover(installation, project_selector)
+            except Exception as exc:
+                logger.error("mcp.open_project_context discovery_failed exception_type=%s", type(exc).__name__)
+                return _tool_error(
+                    "CONTEXT_DISCOVERY_FAILED",
+                    "PowerFactory context discovery failed; inspect sanitized evidence before retrying.",
+                )
+            return {
+                "status": "CONTEXT_REQUIRED" if project_selector is None or study_case is None else "CONFIRMATION_REQUIRED",
+                "contract_version": MCP_CONTRACT_VERSION,
+                "candidates": candidates,
+                "selected_project": project_selector,
+                "selected_study_case": study_case,
+            }
+        requested = {"project_selector": project_selector, "study_case": study_case}
+        if active_context is not None:
+            if active_context == requested:
+                return {
+                    "status": "OK",
+                    "contract_version": MCP_CONTRACT_VERSION,
+                    "context": active_context,
+                    "reused": True,
+                }
+            return _tool_error(
+                "CONTEXT_ALREADY_ACTIVE",
+                "This MCP session already owns a different active PowerFactory context.",
+            )
+        result = run_engineering_tool(
+            "open_project_context",
+            lambda: engineering_runtime().activate_context(
+                project_selector=project_selector, study_case=study_case
+            ),
+        )
+        if result.get("status") != "ERROR":
+            active_context = requested
+            context_history.append(requested)
+            append_context_history(installation, requested)
+        return result
+
+    @server.tool()
     def get_model_context() -> dict[str, object]:
         """Return the verified active PowerFactory context and persisted extraction binding."""
 
-        return run_engineering_tool("get_model_context", lambda: engineering_runtime().get_model_context())
+        return run_contextual_tool("get_model_context", lambda: engineering_runtime().get_model_context())
 
     @server.tool()
     def list_components(
@@ -144,7 +228,7 @@ def create_server(
     ) -> dict[str, object]:
         """List a bounded page of identified components from the active model."""
 
-        return run_engineering_tool(
+        return run_contextual_tool(
             "list_components",
             lambda: _list_components(
                 engineering_runtime,
@@ -158,7 +242,7 @@ def create_server(
     def get_asset_context(product_identity: str) -> dict[str, object]:
         """Return verified locator, attributes, and topology evidence for one product UUID."""
 
-        return run_engineering_tool(
+        return run_contextual_tool(
             "get_asset_context",
             lambda: engineering_runtime().get_asset_context(product_identity=product_identity),
         )
@@ -167,7 +251,7 @@ def create_server(
     def run_validated_load_flow(idempotency_key: str) -> dict[str, object]:
         """Run and persist a bounded load flow for the verified active model context."""
 
-        return run_engineering_tool(
+        return run_contextual_tool(
             "run_validated_load_flow",
             lambda: engineering_runtime().run_validated_load_flow(idempotency_key=idempotency_key),
         )
@@ -176,7 +260,7 @@ def create_server(
     def get_calculation_run(run_id: str) -> dict[str, object]:
         """Return one immutable persisted calculation run and its result reference."""
 
-        return run_engineering_tool(
+        return run_contextual_tool(
             "get_calculation_run",
             lambda: engineering_runtime().get_calculation_run(run_id=run_id),
         )
@@ -188,7 +272,7 @@ def create_server(
     ) -> dict[str, object]:
         """Compare two immutable result snapshots from the same verified context and policy."""
 
-        return run_engineering_tool(
+        return run_contextual_tool(
             "compare_results",
             lambda: engineering_runtime().compare_results(
                 baseline_snapshot_id=baseline_snapshot_id,
@@ -200,13 +284,13 @@ def create_server(
     def refresh_model_graph() -> dict[str, object]:
         """Persist a bounded graph of supported classes and report known coverage gaps."""
 
-        return run_engineering_tool("refresh_model_graph", lambda: engineering_runtime().refresh_model_graph())
+        return run_contextual_tool("refresh_model_graph", lambda: engineering_runtime().refresh_model_graph())
 
     @server.tool()
     def get_model_graph_summary() -> dict[str, object]:
         """Return the latest persisted topology revision and extraction counts."""
 
-        return run_engineering_tool(
+        return run_contextual_tool(
             "get_model_graph_summary", lambda: engineering_runtime().get_model_graph_summary()
         )
 
@@ -223,7 +307,7 @@ def create_server(
     ) -> dict[str, object]:
         """Run a bounded components, neighborhood, or impact query on persisted topology."""
 
-        return run_engineering_tool(
+        return run_contextual_tool(
             "query_model_graph",
             lambda: engineering_runtime().query_model_graph(
                 query_kind=query_kind,
@@ -239,25 +323,26 @@ def create_server(
 
     @server.tool()
     def inspect_active_project() -> dict[str, object]:
-        """Inspect bounded component counts and samples in the configured context."""
+        """Decline the legacy disposable inspection path while a live session owns PowerFactory."""
 
-        from .inspection import run_active_project_inspection
-
-        payload = run_active_project_inspection(installation)
-        logger.info("mcp.inspect_active_project status=%s", payload["status"].lower())
-        return payload
+        return _tool_error(
+            "ENGINE_OPERATION_UNAVAILABLE",
+            "inspect_active_project uses a disposable PowerFactory process and is disabled while "
+            "the persistent MCP runtime owns the engine. Use get_model_context after "
+            "open_project_context instead.",
+        )
 
     @server.tool()
     def run_powerfactory_connectivity_probe(repeat: int = 2) -> dict[str, object]:
-        """Verify the real lifecycle, including load flow, and return sanitized evidence."""
+        """Decline the legacy disposable lifecycle path while a live session owns PowerFactory."""
 
-        from .probe import run_connectivity_probe
-
-        payload = run_connectivity_probe(installation, repeat)
-        logger.info(
-            "mcp.run_powerfactory_connectivity_probe status=%s", payload["probe_status"].lower()
+        del repeat
+        return _tool_error(
+            "ENGINE_OPERATION_UNAVAILABLE",
+            "run_powerfactory_connectivity_probe uses a disposable PowerFactory process and is "
+            "disabled while the persistent MCP runtime owns the engine. Installer acquisition "
+            "validation remains disposable before MCP startup.",
         )
-        return payload
 
     return server
 
@@ -266,10 +351,13 @@ def build_asgi_app(
     installation: McpInstallation,
     *,
     runtime_factory: Callable[[McpInstallation], EngineeringToolRuntime] = build_engineering_runtime,
+    context_discovery: Callable[[McpInstallation, str | None], dict[str, Any]] | None = None,
 ) -> Any:
     """Build the authenticated ASGI endpoint used by uvicorn."""
 
-    server = create_server(installation, runtime_factory=runtime_factory)
+    server = create_server(
+        installation, runtime_factory=runtime_factory, context_discovery=context_discovery
+    )
     application = server.streamable_http_app()
     application.add_middleware(LocalBearerMiddleware, bearer_token=read_bearer_token(installation))
     return application

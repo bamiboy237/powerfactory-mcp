@@ -6,6 +6,10 @@ import tempfile
 import unittest
 
 from powerfactory_agent.mcp.configuration import (
+    append_context_history,
+    configure_probe,
+    contextual_installation,
+    count_context_history,
     create_installation,
     load_installation,
     read_bearer_token,
@@ -39,3 +43,35 @@ class McpInstallationTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "must not grant"):
                 load_installation(state_dir / "powerfactory-agent.json")
+
+    def test_installation_probe_settings_do_not_require_or_persist_context(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory) / "agent"
+            create_installation(state_dir)
+            config_path = state_dir / "powerfactory-agent.json"
+            probe_path = configure_probe(
+                config_path,
+                {
+                    "pyd_path": "/tmp/powerfactory.pyd",
+                    "python_version": "3.14",
+                    "session_ownership": "product_owned",
+                },
+            )
+            source = probe_path.read_text(encoding="utf-8")
+            self.assertNotIn("project_selector", source)
+            self.assertNotIn("study_case", source)
+            installation = load_installation(config_path)
+            with contextual_installation(
+                installation, project_selector="CASE_1", study_case="CCT"
+            ) as selected:
+                self.assertNotEqual(installation.probe_config_file, selected.probe_config_file)
+                self.assertIn("CASE_1", selected.probe_config_file.read_text(encoding="utf-8"))
+            self.assertNotIn("CASE_1", probe_path.read_text(encoding="utf-8"))
+
+    def test_context_history_never_restores_an_active_context(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            installation = create_installation(Path(directory) / "agent")
+            append_context_history(
+                installation, {"project_selector": "CASE_1", "study_case": "CCT"}
+            )
+            self.assertEqual(1, count_context_history(installation))

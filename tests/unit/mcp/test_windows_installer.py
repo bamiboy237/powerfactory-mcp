@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[3]
@@ -12,90 +11,87 @@ def _source() -> str:
     return INSTALLER.read_text(encoding="utf-8")
 
 
-def test_advertised_bootstrap_is_downloaded_before_execution() -> None:
-    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
-    assert "} else {" in bootstrap
-    assert "status --porcelain" in bootstrap
-    assert "Preserved locally modified source" in bootstrap
+def test_one_command_bootstrap_downloads_a_complete_script_file() -> None:
+    source = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "Invoke-WebRequest" in source
+    assert "-OutFile $scriptPath" in source
+    assert "& $scriptPath" in source
+    assert "| iex" not in source
+    assert "StateDir" not in source
 
-    documentation_paths = (
-        PROJECT_ROOT / "README.md",
-        PROJECT_ROOT / "docs" / "friend-test.md",
+    for documentation in (PROJECT_ROOT / "README.md", PROJECT_ROOT / "docs" / "friend-test.md"):
+        assert "-OutFile $bootstrap; & $bootstrap" in documentation.read_text(encoding="utf-8")
+
+
+def test_installer_stages_guid_attempts_and_promotes_an_atomic_active_manifest() -> None:
+    source = _source()
+    assert 'Join-Path $root "attempts"' in source
+    assert 'Join-Path $root "releases"' in source
+    assert 'Join-Path $root "failure-reports"' in source
+    assert '"attempt-$([guid]::NewGuid().ToString(\'N\'))"' in source
+    assert "function Write-AtomicJson" in source
+    assert "Move-Item -LiteralPath $temporary -Destination $Path -Force" in source
+    assert "active.json" in source
+    assert "StateDir" not in source
+    assert "Read-Host" not in source
+    assert '"--project"' not in source
+    assert '"--study-case"' not in source
+
+
+def test_transaction_has_explicit_failure_injection_and_all_required_stages() -> None:
+    source = _source()
+    stages = (
+        "preflight",
+        "source",
+        "environment",
+        "secure_configuration",
+        "temporary_mcp_health",
+        "codex_registration",
+        "cutover_prior_service_drain",
+        "acquisition_probe",
+        "promotion",
     )
-    for documentation in documentation_paths:
-        source = documentation.read_text(encoding="utf-8")
-        assert "-OutFile $bootstrap; & $bootstrap" in source
-        assert "| iex" not in source
+    assert "POWERFACTORY_MCP_FAIL_STAGE" in source
+    positions = [source.index(f'Invoke-Stage "{stage}"') for stage in stages]
+    assert positions == sorted(positions)
+    assert "function Write-FailureReport" in source
+    assert "function Restart-PriorRelease" in source
+    assert "function Remove-Attempt" in source
+    assert "schema_version = \"powerfactory-mcp-install-failure/v1\"" in source
 
 
-def test_installer_has_explicit_prerequisite_and_runtime_checks() -> None:
+def test_attempt_cleanup_and_acl_work_never_target_existing_managed_releases() -> None:
     source = _source()
-
-    assert 'Get-RequiredCommand "uv"' in source
-    assert 'Get-RequiredCommand "codex"' in source
-    assert 'Get-RequiredCommand "icacls.exe"' in source
-    assert 'Get-Command "Get-NetTCPConnection"' in source
-    assert 'Get-ChildItem -LiteralPath $pythonRoot -Filter "powerfactory.pyd"' in source
-    assert "access to ${Directory}:" in source
-    assert "access to $Directory:" not in source
-    assert '"sync", "--locked", "--python", $runtime.PythonVersion' in source
-    assert "platform.architecture()[0]" in source
-    assert 'Read-Host "Enter the exact PowerFactory project name"' in source
-    assert 'Read-Host "Enter the exact study case name"' in source
-    assert '"--project", $Project' in source
-    assert '"--study-case", $StudyCase' in source
-    assert '"--session-ownership", "product_owned"' in source
-    assert '"@active"' not in source
+    acl = source[source.index("function Set-AttemptPrivateAcl") : source.index("function Remove-Attempt")]
+    assert "Never recurse into an existing release or managed root" in acl
+    assert '"/T"' not in acl
+    cleanup = source[source.index("function Remove-Attempt") : source.index("function Resolve-PowerFactoryRuntime")]
+    assert "attempt being removed" in cleanup
+    assert "Remove-Item -LiteralPath $Path -Recurse -Force" in cleanup
+    assert "$script:Attempt.path" in source
 
 
-def test_installer_runs_real_probe_before_server_and_codex_registration() -> None:
+def test_health_checks_are_authenticated_and_do_not_start_powerfactory_from_serve() -> None:
     source = _source()
-
-    configure = source.index('Invoke-CheckedCommand "PowerFactory probe configuration"')
-    probe = source.index('Invoke-CheckedCommand "real PowerFactory connectivity probe"')
-    server = source.index("$listener = Get-NetTCPConnection")
-    register = source.index('Invoke-CheckedCommand "Codex MCP registration"')
-
-    assert configure < probe < server < register
-    assert '"probe", "--config", $configPath, "--repeat", "2"' in source
-    assert "fake" not in source.lower()
+    assert 'method="initialize"' in source
+    assert 'Authorization="Bearer $Token"' in source
+    assert "function Start-McpServer" in source
+    assert '"probe-acquisition"' in source
+    assert '"serve", "--config"' not in source  # arguments remain a single Start-Process string
+    assert source.index('Invoke-Stage "temporary_mcp_health"') < source.index('Invoke-Stage "cutover_prior_service_drain"')
+    assert source.index('Invoke-Stage "cutover_prior_service_drain"') < source.index('Invoke-Stage "acquisition_probe"')
 
 
-def test_installer_verifies_existing_or_new_server_with_authenticated_initialize() -> None:
+def test_codex_registration_requires_all_owned_evidence_before_mutation() -> None:
     source = _source()
-
-    assert "function Test-McpInitialize" in source
-    assert 'method = "initialize"' in source
-    assert 'Authorization = "Bearer $Token"' in source
-    assert "function Wait-McpReady" in source
-    assert 'owner.CommandLine -notmatch "powerfactory-agent\\s+serve"' in source
-    assert "did not accept this installation credential" in source
-
-
-def test_installer_keeps_token_out_of_codex_config_and_persistent_environment() -> None:
-    source = _source()
-
-    assert '--bearer-token-env-var", "POWERFACTORY_AGENT_MCP_TOKEN"' in source
+    assert "function Test-OwnedCodexRegistration" in source
+    for proof in ("codex_name", "endpoint", "token_env_var", "Test-McpInitialize", "token_identity"):
+        assert proof in source
+    assert "CODEX_OWNERSHIP_UNPROVEN" in source
+    assert "codex mcp remove powerfactory-agent" in source
+    assert "--bearer-token-env-var" in source
     assert "SetEnvironmentVariable" not in source
-    assert "Start-PowerFactoryCodex.ps1" in source
-    assert "Get-Content -LiteralPath `$tokenPath -Raw" in source
-    acl_function = source[
-        source.index("function Set-PrivateStateAcl") : source.index("function Test-McpInitialize")
-    ]
-    assert re.search(r"icacls.*?/inheritance:r", acl_function, flags=re.DOTALL | re.IGNORECASE)
-    assert '"/grant" "*${currentSid}:F" "/T" "/C" "/Q"' in acl_function
-    assert "Get-ChildItem -LiteralPath $Directory -Force -Recurse" in acl_function
-    assert 'if ($target.PSIsContainer) { "(OI)(CI)F" } else { "F" }' in acl_function
-    assert '"/remove:g" $identity' in acl_function
-    assert '"*${currentSid}:$rights"' in acl_function
-    assert "Unexpected accounts retain access" in source
-
-
-def test_installer_is_idempotent_without_rotating_existing_credentials() -> None:
-    source = _source()
-
-    assert "if (-not (Test-Path -LiteralPath $configPath))" in source
-    assert "if (-not (Test-Path -LiteralPath $tokenPath))" in source
-    assert "Existing installation uses port" in source
-    assert "Reusing the healthy PowerFactory MCP server" in source
-    assert "Remove-Item" not in source
+    helper = (PROJECT_ROOT / "scripts" / "windows-installer-registration.ps1").read_text(encoding="utf-8")
+    assert "Get-CodexRegistrationFingerprint" in helper
+    assert "unknown_schema" in helper
+    assert "streamable_http" in helper

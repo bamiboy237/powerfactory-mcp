@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from powerfactory_agent.probes import (
+    LifecycleStage,
     LifecycleProbeRunner,
     PowerFactory2026LifecycleAdapter,
     PowerFactory2026ProbeConfig,
@@ -21,6 +22,79 @@ from .configuration import McpInstallation
 from .server import MCP_CONTRACT_VERSION, _write_evidence
 
 _PROBE_TIMEOUT_SECONDS = 180
+_ACQUISITION_STAGES = (
+    LifecycleStage.ENVIRONMENT,
+    LifecycleStage.IMPORT_MODULE,
+    LifecycleStage.CONNECT_APPLICATION,
+)
+
+
+def run_acquisition_probe(installation: McpInstallation) -> dict[str, Any]:
+    """Verify one disposable PowerFactory acquisition without model context selection."""
+
+    if installation.probe_config_file is None:
+        raise ValueError("PowerFactory installation settings are not configured")
+    with tempfile.TemporaryDirectory(prefix="powerfactory-acquisition-") as directory:
+        output = Path(directory) / "evidence.json"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "powerfactory_agent.mcp.cli",
+                "_probe-acquisition-once",
+                "--probe-config",
+                str(installation.probe_config_file),
+                "--output",
+                str(output),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=_PROBE_TIMEOUT_SECONDS,
+        )
+        if not output.is_file():
+            raise RuntimeError(
+                f"PowerFactory acquisition worker exited with code {completed.returncode}"
+            )
+        try:
+            evidence = json.loads(output.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("PowerFactory acquisition worker wrote invalid evidence") from error
+    evidence_path = _write_evidence(installation, evidence)
+    return {
+        "contract_version": MCP_CONTRACT_VERSION,
+        "probe_status": "PASS" if evidence.get("status") == "PASS" else "FAIL",
+        "evidence_file": evidence_path.name,
+        "evidence": evidence,
+    }
+
+
+def write_single_acquisition_probe(probe_config_path: Path, output: Path) -> bool:
+    """Run acquisition and cleanup in a disposable Python process."""
+
+    config = PowerFactory2026ProbeConfig.from_json_file(probe_config_path)
+    adapter = PowerFactory2026LifecycleAdapter(config)
+    stages: dict[str, Any] = {}
+    failure: str | None = None
+    try:
+        for stage in _ACQUISITION_STAGES:
+            stages[stage.value] = adapter.execute_stage(stage)
+    except Exception as exc:
+        failure = type(exc).__name__
+    try:
+        cleanup = adapter.execute_stage(LifecycleStage.CLEANUP)
+    except Exception as exc:
+        cleanup = {"error_type": type(exc).__name__}
+        failure = failure or type(exc).__name__
+    payload = {
+        "schema_version": "powerfactory-acquisition-probe/v1",
+        "status": "PASS" if failure is None else "FAIL",
+        "failure_type": failure,
+        "stages": stages,
+        "cleanup": cleanup,
+    }
+    output.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n", encoding="utf-8")
+    return failure is None
 
 
 def run_connectivity_probe(installation: McpInstallation, repeat: int) -> dict[str, Any]:

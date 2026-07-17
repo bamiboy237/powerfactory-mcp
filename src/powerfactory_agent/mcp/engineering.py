@@ -24,6 +24,10 @@ def validate_component_list_request(*, asset_kind: str, limit: int) -> None:
 class EngineeringToolRuntime(Protocol):
     """High-level operations exposed by MCP without vendor objects or handles."""
 
+    def activate_context(
+        self, *, project_selector: str, study_case: str
+    ) -> dict[str, object]: ...
+
     def get_model_context(self) -> dict[str, object]: ...
 
     def list_components(
