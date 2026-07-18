@@ -121,6 +121,82 @@ function Test-AttemptOwnership {
     return [IO.Path]::GetFullPath([string]$ledger.path).TrimEnd('\\') -eq [IO.Path]::GetFullPath($Path).TrimEnd('\\')
 }
 
+function Get-LegacyAttemptSourceCommit {
+    param([string]$Git, [string]$Source, [string]$ExpectedRepositoryUrl)
+
+    $gitDirectory = Join-Path $Source ".git"
+    $gitItem = Get-Item -LiteralPath $gitDirectory -Force -ErrorAction SilentlyContinue
+    if (-not $gitItem -or -not $gitItem.PSIsContainer -or ($gitItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        return $null
+    }
+
+    $originOutput = & $Git -C $Source remote get-url origin 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $origin = (($originOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine).Trim().TrimEnd('/')
+    $expected = $ExpectedRepositoryUrl.Trim().TrimEnd('/')
+    if (-not $origin.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+
+    $commitOutput = & $Git -C $Source rev-parse HEAD 2>$null
+    $commit = (($commitOutput | ForEach-Object { [string]$_ }) -join "").Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -eq 0 -and $commit -match '^[0-9a-f]{40}$') { return $commit }
+    # A failed fetch can leave a valid repository with no commit checked out.
+    return "legacy-source-unresolved"
+}
+
+function Initialize-LegacyAttemptOwnership {
+    param(
+        [string]$Path,
+        [string]$AttemptsRoot,
+        [string]$Git,
+        [string]$ExpectedRepositoryUrl
+    )
+
+    try {
+        $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\\')
+        $fullRoot = [IO.Path]::GetFullPath($AttemptsRoot).TrimEnd('\\')
+        $attemptId = Split-Path -Leaf $fullPath
+        $attemptParent = Split-Path -Parent $fullPath
+        if ($attemptId -notmatch '^attempt-[0-9a-fA-F]{32}$') { return $false }
+        if (-not $attemptParent.Equals($fullRoot, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+
+        $attemptItem = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+        if (-not $attemptItem.PSIsContainer -or ($attemptItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
+
+        $entries = @(Get-ChildItem -LiteralPath $fullPath -Force -ErrorAction Stop)
+        if ($entries.Count -eq 0) {
+            $commit = "legacy-empty"
+        } else {
+            $unexpected = @($entries | Where-Object { $_.Name -notin @("source", "state") })
+            if ($unexpected.Count -ne 0) { return $false }
+            if (@($entries | Where-Object { -not $_.PSIsContainer }).Count -ne 0) { return $false }
+            if (@(Get-ChildItem -LiteralPath $fullPath -Force -Recurse -ErrorAction Stop | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count -ne 0) { return $false }
+
+            $source = Join-Path $fullPath "source"
+            if (-not (Test-Path -LiteralPath $source -PathType Container)) { return $false }
+            $sourceEntries = @(Get-ChildItem -LiteralPath $source -Force -ErrorAction Stop)
+            if ($sourceEntries.Count -eq 0 -and $entries.Count -eq 1) {
+                $commit = "legacy-empty-source"
+            } else {
+                $commit = Get-LegacyAttemptSourceCommit $Git $source $ExpectedRepositoryUrl
+                if (-not $commit) { return $false }
+            }
+        }
+
+        # Older transactional releases created this exact staged layout before
+        # the durable ownership ledger existed. Adoption is recorded before any
+        # cleanup so a later interruption remains recoverable.
+        Write-AtomicJson (Join-Path $fullPath "attempt-ownership.json") @{
+            schema_version = "powerfactory-mcp-attempt-ownership/v1"
+            attempt_id = $attemptId
+            path = $fullPath
+            commit = $commit
+            migration_source = "legacy-transaction-v0"
+        }
+        return Test-AttemptOwnership $fullPath
+    }
+    catch { return $false }
+}
+
 function Test-PendingReleaseOwnership {
     param([string]$Path)
     $marker = Read-JsonFile (Join-Path $Path "install-pending.json")
@@ -591,7 +667,9 @@ try {
         Get-ChildItem -LiteralPath $attempts -Directory -ErrorAction SilentlyContinue | ForEach-Object {
             $attemptDirectory = $_.FullName
             if (-not (Test-AttemptOwnership $attemptDirectory)) {
-                Stop-Install "A stale attempt cannot be proven installer-owned." "OWNERSHIP_UNPROVEN"
+                if (-not (Initialize-LegacyAttemptOwnership $attemptDirectory $attempts $script:Git $RepositoryUrl)) {
+                    Stop-Install "A stale attempt cannot be proven installer-owned." "OWNERSHIP_UNPROVEN"
+                }
             }
             Get-ChildItem -LiteralPath $attemptDirectory -Filter "*ownership.json" -File -ErrorAction SilentlyContinue | ForEach-Object {
                 $ledger = Read-JsonFile $_.FullName

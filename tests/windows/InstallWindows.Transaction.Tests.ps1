@@ -161,6 +161,58 @@ Describe "PowerFactory MCP transactional installer" {
         Test-Path -LiteralPath $script:activePath | Should -BeTrue
     }
 
+    It "adopts and removes an empty attempt created by the legacy transaction" {
+        $legacyPath = Join-Path $script:attempts "attempt-55555555555555555555555555555555"
+        New-Item -ItemType Directory -Path $legacyPath -Force | Out-Null
+
+        Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot
+
+        Test-Path -LiteralPath $legacyPath | Should -BeFalse
+        Test-Path -LiteralPath $script:activePath | Should -BeTrue
+        @(Get-ChildItem -LiteralPath $script:reports -Filter "*.json").Count | Should -Be 0
+    }
+
+    It "adopts a legacy staged clone only after its repository identity is verified" {
+        $legacyPath = Join-Path $script:attempts "attempt-66666666666666666666666666666666"
+        New-Item -ItemType Directory -Path (Join-Path $legacyPath "source\.git"), (Join-Path $legacyPath "state") -Force | Out-Null
+        "credential" | Set-Content -LiteralPath (Join-Path $legacyPath "state\mcp-token")
+        Mock Get-LegacyAttemptSourceCommit { "dddddddddddddddddddddddddddddddddddddddd" }
+
+        Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot
+
+        Test-Path -LiteralPath $legacyPath | Should -BeFalse
+        Should -Invoke Get-LegacyAttemptSourceCommit -Times 1 -Exactly
+        Test-Path -LiteralPath $script:activePath | Should -BeTrue
+    }
+
+    It "preserves a legacy-looking directory when repository ownership is not proven" {
+        $legacyPath = Join-Path $script:attempts "attempt-77777777777777777777777777777777"
+        New-Item -ItemType Directory -Path (Join-Path $legacyPath "source") -Force | Out-Null
+        "unrelated" | Set-Content -LiteralPath (Join-Path $legacyPath "source\notes.txt")
+        Mock Get-LegacyAttemptSourceCommit { $null }
+
+        $caught = $null
+        try { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } catch { $caught = $_ }
+
+        $caught.Exception.Data["category"] | Should -Be "OWNERSHIP_UNPROVEN"
+        Test-Path -LiteralPath $legacyPath | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $legacyPath "attempt-ownership.json") | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $legacyPath "source\notes.txt") | Should -BeTrue
+    }
+
+    It "preserves a legacy-looking directory with unexpected top-level content" {
+        $legacyPath = Join-Path $script:attempts "attempt-88888888888888888888888888888888"
+        New-Item -ItemType Directory -Path $legacyPath -Force | Out-Null
+        "unrelated" | Set-Content -LiteralPath (Join-Path $legacyPath "do-not-delete.txt")
+
+        $caught = $null
+        try { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } catch { $caught = $_ }
+
+        $caught.Exception.Data["category"] | Should -Be "OWNERSHIP_UNPROVEN"
+        Test-Path -LiteralPath (Join-Path $legacyPath "do-not-delete.txt") | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $legacyPath "attempt-ownership.json") | Should -BeFalse
+    }
+
     It "refuses an unknown Codex registration before creating an attempt" {
         Mock Get-CodexRegistrationFingerprint { [PSCustomObject]@{ state = "unknown_schema"; fingerprint = $null } }
         $caught = $null
