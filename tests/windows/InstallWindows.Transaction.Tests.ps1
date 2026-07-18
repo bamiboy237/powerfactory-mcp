@@ -185,6 +185,40 @@ Describe "PowerFactory MCP transactional installer" {
         Test-Path -LiteralPath $script:activePath | Should -BeTrue
     }
 
+    It "adopts the intermediate legacy attempt only after its process and pending ledgers are verified" {
+        $legacyId = "attempt-99999999999999999999999999999999"
+        $legacyCommit = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        $legacyPath = Join-Path $script:attempts $legacyId
+        $statePath = Join-Path $legacyPath "state"
+        $configPath = Join-Path $statePath "powerfactory-agent.json"
+        New-Item -ItemType Directory -Path (Join-Path $legacyPath "source\.git"), $statePath -Force | Out-Null
+        @{ schema_version = "powerfactory-mcp-process-ownership/v1"; pid = 12; process_start_ticks = 123; command_kind = "mcp_server"; scope = "staged_attempt"; config_path = $configPath; endpoint = "http://127.0.0.1:41234/mcp" } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $legacyPath "ownership.json")
+        @{ schema_version = "powerfactory-mcp-process-ownership/v1"; pid = 13; process_start_ticks = 124; command_kind = "acquisition_probe"; scope = "disposable_probe"; config_path = $configPath } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $legacyPath "acquisition-ownership.json")
+        @{ schema_version = "powerfactory-mcp-pending/v1"; attempt_id = $legacyId; commit = $legacyCommit } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $legacyPath "install-pending.json")
+        Mock Get-LegacyAttemptSourceCommit { $legacyCommit }
+
+        Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot
+
+        Test-Path -LiteralPath $legacyPath | Should -BeFalse
+        Should -Invoke Stop-OwnedProcess -Times 2 -Exactly
+        Test-Path -LiteralPath $script:activePath | Should -BeTrue
+    }
+
+    It "preserves an intermediate legacy attempt whose process ledger is not exactly bound" {
+        $legacyPath = Join-Path $script:attempts "attempt-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        $statePath = Join-Path $legacyPath "state"
+        New-Item -ItemType Directory -Path (Join-Path $legacyPath "source\.git"), $statePath -Force | Out-Null
+        @{ schema_version = "powerfactory-mcp-process-ownership/v1"; pid = 12; process_start_ticks = 123; command_kind = "mcp_server"; scope = "active_release"; config_path = (Join-Path $statePath "powerfactory-agent.json"); endpoint = "http://127.0.0.1:41234/mcp" } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $legacyPath "ownership.json")
+        Mock Get-LegacyAttemptSourceCommit { "ffffffffffffffffffffffffffffffffffffffff" }
+
+        $caught = $null
+        try { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } catch { $caught = $_ }
+
+        $caught.Exception.Data["category"] | Should -Be "OWNERSHIP_UNPROVEN"
+        Test-Path -LiteralPath $legacyPath | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $legacyPath "attempt-ownership.json") | Should -BeFalse
+    }
+
     It "preserves a legacy-looking directory when repository ownership is not proven" {
         $legacyPath = Join-Path $script:attempts "attempt-77777777777777777777777777777777"
         New-Item -ItemType Directory -Path (Join-Path $legacyPath "source") -Force | Out-Null

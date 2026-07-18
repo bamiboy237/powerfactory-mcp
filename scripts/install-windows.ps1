@@ -143,6 +143,29 @@ function Get-LegacyAttemptSourceCommit {
     return "legacy-source-unresolved"
 }
 
+function Test-LegacyProcessOwnership {
+    param([string]$Path, [string]$ExpectedCommandKind, [string]$ExpectedScope, [string]$ExpectedConfigPath)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    $ledger = Read-JsonFile $Path
+    if (-not $ledger -or $ledger.schema_version -ne "powerfactory-mcp-process-ownership/v1") { return $false }
+    if (-not $ledger.pid -or -not $ledger.process_start_ticks -or -not $ledger.config_path) { return $false }
+    if ($ledger.command_kind -ne $ExpectedCommandKind -or $ledger.scope -ne $ExpectedScope) { return $false }
+    if ([IO.Path]::GetFullPath([string]$ledger.config_path).TrimEnd('\\') -ne [IO.Path]::GetFullPath($ExpectedConfigPath).TrimEnd('\\')) { return $false }
+    if ($ExpectedCommandKind -eq "mcp_server" -and [string]$ledger.endpoint -notmatch '^http://127\.0\.0\.1:\d+/mcp$') { return $false }
+    return $true
+}
+
+function Test-LegacyPendingMarker {
+    param([string]$Path, [string]$ExpectedAttemptId, [string]$ExpectedCommit)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    $marker = Read-JsonFile $Path
+    if (-not $marker -or $marker.schema_version -ne "powerfactory-mcp-pending/v1") { return $false }
+    if ($marker.attempt_id -ne $ExpectedAttemptId -or $marker.commit -ne $ExpectedCommit) { return $false }
+    return [string]$marker.commit -match '^[0-9a-fA-F]{40}$'
+}
+
 function Initialize-LegacyAttemptOwnership {
     param(
         [string]$Path,
@@ -166,9 +189,11 @@ function Initialize-LegacyAttemptOwnership {
         if ($entries.Count -eq 0) {
             $commit = "legacy-empty"
         } else {
-            $unexpected = @($entries | Where-Object { $_.Name -notin @("source", "state") })
+            $allowedNames = @("source", "state", "ownership.json", "acquisition-ownership.json", "install-pending.json")
+            $unexpected = @($entries | Where-Object { $_.Name -notin $allowedNames })
             if ($unexpected.Count -ne 0) { return $false }
-            if (@($entries | Where-Object { -not $_.PSIsContainer }).Count -ne 0) { return $false }
+            if (@($entries | Where-Object { $_.Name -in @("source", "state") -and -not $_.PSIsContainer }).Count -ne 0) { return $false }
+            if (@($entries | Where-Object { $_.Name -notin @("source", "state") -and $_.PSIsContainer }).Count -ne 0) { return $false }
             if (@(Get-ChildItem -LiteralPath $fullPath -Force -Recurse -ErrorAction Stop | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count -ne 0) { return $false }
 
             $source = Join-Path $fullPath "source"
@@ -180,6 +205,12 @@ function Initialize-LegacyAttemptOwnership {
                 $commit = Get-LegacyAttemptSourceCommit $Git $source $ExpectedRepositoryUrl
                 if (-not $commit) { return $false }
             }
+
+            $state = Join-Path $fullPath "state"
+            $config = Join-Path $state "powerfactory-agent.json"
+            if (-not (Test-LegacyProcessOwnership (Join-Path $fullPath "ownership.json") "mcp_server" "staged_attempt" $config)) { return $false }
+            if (-not (Test-LegacyProcessOwnership (Join-Path $fullPath "acquisition-ownership.json") "acquisition_probe" "disposable_probe" $config)) { return $false }
+            if (-not (Test-LegacyPendingMarker (Join-Path $fullPath "install-pending.json") $attemptId $commit)) { return $false }
         }
 
         # Older transactional releases created this exact staged layout before
