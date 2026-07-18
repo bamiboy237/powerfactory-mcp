@@ -19,7 +19,7 @@ This file is only an execution index. Implementation details remain in [`PRODUCT
 | Frontier | Current position | Meaning |
 |---|---|---|
 | Acceptance | Item 5 / Buildout 0 | `BLOCKED — Windows validation required`; the prepared probe is not accepted evidence. |
-| Development | Transactional friend-test installation and persistent runtime stabilization | Windows evidence at `28bdf7c` proves the earlier automated installer and real-engine lifecycle. Windows CI at `ed0edc0` proves PowerShell 5.1 parsing plus 25 mocked transactional install, rollback, rerun, stale-recovery, and legacy-attempt migration cases. The current installer uses GUID-staged releases, exact transaction roots, sanitized rollback reports, context-free service startup, acquisition-only validation, and explicit per-session context admission. It does not claim real PowerFactory acceptance or containment of a native host-process crash. |
+| Development | Transactional friend-test installation and persistent runtime stabilization | Windows evidence at `28bdf7c` proves the earlier automated installer and real-engine lifecycle. Windows CI at `3c785c8` proves PowerShell 5.1 parsing plus 27 mocked transactional install, rollback, rerun, stale-recovery, and legacy-attempt migration cases. The current installer uses GUID-staged releases, exact transaction roots, sanitized rollback reports, context-free service startup, acquisition-only validation, and explicit per-session context admission. It does not claim real PowerFactory acceptance or containment of a native host-process crash. |
 
 ## Preparation record
 
@@ -69,6 +69,8 @@ Transactional Windows installer verification on 2026-07-18: review commit `e75ef
 Promotion verification on 2026-07-18: GitHub `main` commit `81a079c` passed the same Windows PowerShell 5.1 parser and Pester transaction suite in Actions run `29646444335`. The following documentation-only evidence commit does not affect the tested installer, bootstrap, transaction, or rollback behavior.
 
 Legacy-attempt recovery verification on 2026-07-18: commit `ed0edc0` passed Windows PowerShell 5.1 parsing and Pester 5.7.1 (`25 passed`, `0 failed`) in GitHub Actions run `29647750847`, then was promoted unchanged to `main`. The installer can migrate an empty legacy attempt or a legacy staged clone whose exact repository origin is verified; it preserves and rejects unknown layouts, repositories, and reparse points. This resolves compatibility with the earlier transaction format only. Formal Windows and real PowerFactory acceptance remain blocked.
+
+Intermediate-attempt recovery verification on 2026-07-18: commit `3c785c8` passed Windows PowerShell 5.1 parsing and Pester 5.7.1 (`27 passed`, `0 failed`) in GitHub Actions run `29648420778`, then was promoted unchanged to `main`. Recovery now also recognizes the exact process and pending ledgers emitted by the intermediate transactional installer, requiring their schemas, command scopes, configuration path, attempt ID, source commit, and repository identity to match before cleanup. Unbound metadata remains preserved and rejected. Formal Windows and real PowerFactory acceptance remain blocked.
 
 ## Delivery sequence
 
