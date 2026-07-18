@@ -288,7 +288,8 @@ if ($TestHarness) { return }
 try {
     Invoke-Stage "preflight" {
         New-Item -ItemType Directory -Force -Path $attempts, $releases, $reports | Out-Null
-        $mutexDigest = ([System.BitConverter]::ToString((New-Object Security.Cryptography.SHA256Managed).ComputeHash([Text.Encoding]::UTF8.GetBytes($root))).Replace("-", "").ToLowerInvariant().Substring(0, 24)
+        $mutexHashBytes = (New-Object Security.Cryptography.SHA256Managed).ComputeHash([Text.Encoding]::UTF8.GetBytes($root))
+        $mutexDigest = [System.BitConverter]::ToString($mutexHashBytes).Replace("-", "").ToLowerInvariant().Substring(0, 24)
         $script:Mutex = New-Object System.Threading.Mutex($false, "Local\\PowerFactoryMCP-$mutexDigest")
         if (-not $script:Mutex.WaitOne(0)) { Stop-Install "Another PowerFactory MCP installation is already running." "INSTALLER_BUSY" }
         if ($env:OS -ne "Windows_NT") { Stop-Install "This installer supports Windows only." "PLATFORM_UNSUPPORTED" }
@@ -381,7 +382,9 @@ try {
         Move-Item -LiteralPath $script:Attempt.path -Destination $releasePath
         $script:Attempt.path = $releasePath; $script:Attempt.source = Join-Path $releasePath "source"; $script:Attempt.state = Join-Path $releasePath "state"
         $script:FinalServer = Start-McpServer $script:Uv $script:Attempt.source (Join-Path $script:Attempt.state "powerfactory-agent.json") $Port $script:Token
-        Write-AtomicJson (Join-Path $releasePath "ownership.json") @{ pid=$script:FinalServer.Id; process_start_ticks=[int64]$script:FinalServer.StartTime.ToUniversalTime().Ticks; config_path=(Join-Path $script:Attempt.state "powerfactory-agent.json"); endpoint="http://127.0.0.1:$Port/mcp"; codex_name="powerfactory-agent"; token_env_var="POWERFACTORY_AGENT_MCP_TOKEN"; token_identity=([System.BitConverter]::ToString((New-Object Security.Cryptography.SHA256Managed).ComputeHash([Text.Encoding]::UTF8.GetBytes($script:Token))).Replace("-", "").ToLowerInvariant(); persistent_engine="none" }
+        $tokenHashBytes = (New-Object Security.Cryptography.SHA256Managed).ComputeHash([Text.Encoding]::UTF8.GetBytes($script:Token))
+        $tokenIdentity = [System.BitConverter]::ToString($tokenHashBytes).Replace("-", "").ToLowerInvariant()
+        Write-AtomicJson (Join-Path $releasePath "ownership.json") @{ pid=$script:FinalServer.Id; process_start_ticks=[int64]$script:FinalServer.StartTime.ToUniversalTime().Ticks; config_path=(Join-Path $script:Attempt.state "powerfactory-agent.json"); endpoint="http://127.0.0.1:$Port/mcp"; codex_name="powerfactory-agent"; token_env_var="POWERFACTORY_AGENT_MCP_TOKEN"; token_identity=$tokenIdentity; persistent_engine="none" }
         Invoke-CheckedCommand $script:Uv @("run", "powerfactory-agent", "probe-acquisition", "--config", (Join-Path $script:Attempt.state "powerfactory-agent.json")) "Final PowerFactory acquisition validation failed"
         Write-AtomicJson $activePath @{ schema_version="powerfactory-mcp-active/v1"; release_path=$releasePath; commit=$script:Attempt.commit; port=$Port }
         Write-CodexLauncher (Join-Path $root "Start-PowerFactoryCodex.ps1") $root $script:Codex

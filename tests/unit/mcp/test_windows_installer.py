@@ -95,3 +95,11 @@ def test_codex_registration_requires_all_owned_evidence_before_mutation() -> Non
     assert "Get-CodexRegistrationFingerprint" in helper
     assert "unknown_schema" in helper
     assert "streamable_http" in helper
+
+
+def test_installer_uses_intermediate_hash_values_for_powershell_parse_safety() -> None:
+    source = _source()
+    assert "$mutexHashBytes = " in source
+    assert "$mutexDigest = [System.BitConverter]::ToString($mutexHashBytes)" in source
+    assert "$tokenHashBytes = " in source
+    assert "token_identity=$tokenIdentity" in source
