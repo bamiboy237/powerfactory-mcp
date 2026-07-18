@@ -66,6 +66,8 @@ Persistent-runtime stabilization verification on 2026-07-16: focused MCP, authen
 
 Transactional Windows installer verification on 2026-07-18: review commit `e75ef05` passed Windows PowerShell 5.1 parsing and Pester 5.7.1 (`21 passed`, `0 failed`) in GitHub Actions run `29646276885`; the NUnit artifact was uploaded. Focused local MCP/installer tests passed (`29 passed`; one existing Starlette/httpx deprecation warning), `git diff --check` passed, and Graphify was refreshed. This validates mocked installer transaction and rollback behavior only. Real PowerFactory lifecycle, persistent runtime, and formal dependency-matrix acceptance remain blocked pending exact-commit teammate evidence.
 
+Promotion verification on 2026-07-18: GitHub `main` commit `81a079c` passed the same Windows PowerShell 5.1 parser and Pester transaction suite in Actions run `29646444335`. The following documentation-only evidence commit does not affect the tested installer, bootstrap, transaction, or rollback behavior.
+
 ## Delivery sequence
 
 | Done | ID | Focused deliverable | Prerequisite check | Completion check | Roadmap source |
