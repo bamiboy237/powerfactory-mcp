@@ -19,7 +19,7 @@ This file is only an execution index. Implementation details remain in [`PRODUCT
 | Frontier | Current position | Meaning |
 |---|---|---|
 | Acceptance | Item 5 / Buildout 0 | `BLOCKED — Windows validation required`; the prepared probe is not accepted evidence. |
-| Development | Transactional friend-test installation and persistent runtime stabilization | Windows evidence at `28bdf7c` proves the earlier automated installer, product-owned engine lifecycle, exact `CASE_1`/`CCT` activation, authenticated MCP startup, Codex registration, and isolated inspection. The current local preparation replaces in-place state with GUID-staged transactional releases, sanitized rollback reports, context-free service startup, acquisition-only validation, and explicit per-session context admission. It does not claim Windows acceptance or containment of a native host-process crash. |
+| Development | Transactional friend-test installation and persistent runtime stabilization | Windows evidence at `28bdf7c` proves the earlier automated installer and real-engine lifecycle. Windows CI at `e75ef05` proves PowerShell 5.1 parsing plus 21 mocked transactional install, rollback, rerun, and stale-recovery cases. The current installer uses GUID-staged releases, exact transaction roots, sanitized rollback reports, context-free service startup, acquisition-only validation, and explicit per-session context admission. It does not claim real PowerFactory acceptance or containment of a native host-process crash. |
 
 ## Preparation record
 
@@ -63,6 +63,8 @@ Lease-fencing milestone verification on 2026-07-15: `uv run pytest -q` (`154 pas
 Friend-test MCP product verification on 2026-07-15: engineering MCP registration/forwarding and server/configuration tests passed (`6 passed`); native PowerFactory vendor, durable identity, and schema migration tests passed (`11 passed`); focused compilation/import passed. Earlier installer/probe verification remains recorded below.
 
 Persistent-runtime stabilization verification on 2026-07-16: focused MCP, authenticated transport, owner, and runtime-diagnostic tests passed (`18 passed`; one existing Starlette/httpx deprecation warning); focused `compileall`, `git diff --check`, and `graphify update .` passed. The authenticated listener survives an ordinary Python runtime exception without reinitializing PowerFactory. Windows retry remains required with `list_components({"asset_kind":"terminal","limit":100})`; a repeated endpoint loss requires a dedicated worker-process boundary before GUI work.
+
+Transactional Windows installer verification on 2026-07-18: review commit `e75ef05` passed Windows PowerShell 5.1 parsing and Pester 5.7.1 (`21 passed`, `0 failed`) in GitHub Actions run `29646276885`; the NUnit artifact was uploaded. Focused local MCP/installer tests passed (`29 passed`; one existing Starlette/httpx deprecation warning), `git diff --check` passed, and Graphify was refreshed. This validates mocked installer transaction and rollback behavior only. Real PowerFactory lifecycle, persistent runtime, and formal dependency-matrix acceptance remain blocked pending exact-commit teammate evidence.
 
 ## Delivery sequence
 
