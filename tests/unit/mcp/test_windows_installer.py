@@ -13,14 +13,18 @@ def _source() -> str:
 
 def test_one_command_bootstrap_downloads_a_complete_script_file() -> None:
     source = BOOTSTRAP.read_text(encoding="utf-8")
-    assert "Invoke-WebRequest" in source
-    assert "-OutFile $scriptPath" in source
-    assert "& $scriptPath" in source
+    assert "git" in source
+    assert "clone --depth 1 --branch $Ref" in source
+    assert "rev-parse HEAD" in source
+    assert "-Ref $commit" in source
+    assert 'Join-Path $bootstrapSource "scripts\\install-windows.ps1"' in source
     assert "| iex" not in source
     assert "StateDir" not in source
 
     for documentation in (PROJECT_ROOT / "README.md", PROJECT_ROOT / "docs" / "friend-test.md"):
-        assert "-OutFile $bootstrap; & $bootstrap" in documentation.read_text(encoding="utf-8")
+        text = documentation.read_text(encoding="utf-8")
+        assert "Set-ExecutionPolicy -Scope Process Bypass -Force" in text
+        assert "-OutFile $bootstrap; & $bootstrap" in text
 
 
 def test_installer_stages_guid_attempts_and_promotes_an_atomic_active_manifest() -> None:
@@ -30,7 +34,7 @@ def test_installer_stages_guid_attempts_and_promotes_an_atomic_active_manifest()
     assert 'Join-Path $root "failure-reports"' in source
     assert '"attempt-$([guid]::NewGuid().ToString(\'N\'))"' in source
     assert "function Write-AtomicJson" in source
-    assert "Move-Item -LiteralPath $temporary -Destination $Path -Force" in source
+    assert "[System.IO.File]::Replace($temporary, $Path, $null)" in source
     assert "active.json" in source
     assert "StateDir" not in source
     assert "Read-Host" not in source
@@ -67,7 +71,9 @@ def test_attempt_cleanup_and_acl_work_never_target_existing_managed_releases() -
     assert '"/T"' not in acl
     cleanup = source[source.index("function Remove-Attempt") : source.index("function Resolve-PowerFactoryRuntime")]
     assert "attempt being removed" in cleanup
-    assert "Remove-Item -LiteralPath $Path -Recurse -Force" in cleanup
+    assert "Remove-Item -LiteralPath $fullPath -Recurse -Force" in cleanup
+    assert "refused_outside_managed_roots" in cleanup
+    assert "refused_reparse_point" in cleanup
     assert "$script:Attempt.path" in source
 
 
@@ -76,8 +82,10 @@ def test_health_checks_are_authenticated_and_do_not_start_powerfactory_from_serv
     assert 'method="initialize"' in source
     assert 'Authorization="Bearer $Token"' in source
     assert "function Start-McpServer" in source
-    assert '"probe-acquisition"' in source
+    assert '"probe-acquisition --config' in source
     assert '"serve", "--config"' not in source  # arguments remain a single Start-Process string
+    assert '"run powerfactory-agent serve' not in source
+    assert "powerfactory-agent.exe" in source
     assert source.index('Invoke-Stage "temporary_mcp_health"') < source.index('Invoke-Stage "cutover_prior_service_drain"')
     assert source.index('Invoke-Stage "cutover_prior_service_drain"') < source.index('Invoke-Stage "acquisition_probe"')
 
@@ -91,15 +99,23 @@ def test_codex_registration_requires_all_owned_evidence_before_mutation() -> Non
     assert "codex mcp remove powerfactory-agent" in source
     assert "--bearer-token-env-var" in source
     assert "SetEnvironmentVariable" not in source
-    helper = (PROJECT_ROOT / "scripts" / "windows-installer-registration.ps1").read_text(encoding="utf-8")
-    assert "Get-CodexRegistrationFingerprint" in helper
-    assert "unknown_schema" in helper
-    assert "streamable_http" in helper
+    assert "Get-CodexRegistrationFingerprint" in source
+    assert "mcp list --json" in source
+    assert "unknown_schema" in source
+    assert "streamable_http" in source
 
 
-def test_installer_uses_intermediate_hash_values_for_powershell_parse_safety() -> None:
+def test_installer_uses_one_hash_helper_for_powershell_parse_safety() -> None:
     source = _source()
-    assert "$mutexHashBytes = " in source
-    assert "$mutexDigest = [System.BitConverter]::ToString($mutexHashBytes)" in source
-    assert "$tokenHashBytes = " in source
-    assert "token_identity=$tokenIdentity" in source
+    assert "function Get-Sha256Hex" in source
+    assert "$mutexDigest = (Get-Sha256Hex $root).Substring(0, 24)" in source
+    assert "token_identity = Get-Sha256Hex $Token" in source
+
+
+def test_interrupted_promotion_is_recoverable_and_registration_rollback_is_armed() -> None:
+    source = _source()
+    assert '"install-pending.json"' in source
+    assert 'command_kind = "mcp_server"' in source
+    assert "$script:CodexChanged = $true" in source
+    assert "Register-Codex $script:Codex $endpoint $false" in source
+    assert "Stop-CreatedProcess $script:StagedServer" in source

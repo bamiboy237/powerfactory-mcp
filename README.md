@@ -21,7 +21,7 @@ simulated engine.
 Close PowerFactory, open PowerShell, and run this single command:
 
 ```powershell
-$bootstrap = Join-Path $env:TEMP "powerfactory-mcp-bootstrap.ps1"; irm https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1 -OutFile $bootstrap; & $bootstrap
+Set-ExecutionPolicy -Scope Process Bypass -Force; $bootstrap = Join-Path $env:TEMP "powerfactory-mcp-bootstrap.ps1"; Invoke-WebRequest "https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1" -OutFile $bootstrap; & $bootstrap
 ```
 
 The bootstrap stages each install in a unique managed attempt and validates the

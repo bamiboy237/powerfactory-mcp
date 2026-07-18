@@ -1,0 +1,56 @@
+name: Windows installer
+
+on:
+  push:
+    paths:
+      - "scripts/*.ps1"
+      - "tests/windows/*.ps1"
+      - ".github/workflows/windows-installer.yml"
+  pull_request:
+    paths:
+      - "scripts/*.ps1"
+      - "tests/windows/*.ps1"
+      - ".github/workflows/windows-installer.yml"
+
+jobs:
+  powershell-51:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse every PowerShell release artifact
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem scripts, tests/windows -Filter *.ps1 -File -Recurse
+          $failures = @()
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            foreach ($errorRecord in @($errors)) {
+              $failures += "$($file.FullName):$($errorRecord.Extent.StartLineNumber): $($errorRecord.Message)"
+            }
+          }
+          if ($failures.Count -gt 0) {
+            throw ($failures -join [Environment]::NewLine)
+          }
+
+      - name: Install Pester 5
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Run transactional installer tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          Import-Module Pester -MinimumVersion 5.5.0
+          $result = Invoke-Pester -Path tests/windows/InstallWindows.Transaction.Tests.ps1 -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }

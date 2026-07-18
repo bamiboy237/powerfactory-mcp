@@ -16,7 +16,7 @@ work at the same Git commit.
 Close PowerFactory, then open PowerShell:
 
 ```powershell
-$bootstrap = Join-Path $env:TEMP "powerfactory-mcp-bootstrap.ps1"; irm https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1 -OutFile $bootstrap; & $bootstrap
+Set-ExecutionPolicy -Scope Process Bypass -Force; $bootstrap = Join-Path $env:TEMP "powerfactory-mcp-bootstrap.ps1"; Invoke-WebRequest "https://raw.githubusercontent.com/bamiboy237/powerfactory-mcp/main/scripts/bootstrap-windows.ps1" -OutFile $bootstrap; & $bootstrap
 ```
 
 The installer creates an isolated staged release and validates ABI plus an

@@ -19,6 +19,8 @@ Describe "PowerFactory MCP transactional installer failure injection" {
         $script:Prior = [PSCustomObject]@{ release_path = (Join-Path $TestDrive "prior-release"); port = 8787 }
         $script:PriorWasStopped = $true
         $script:CodexChanged = $true
+        $script:LauncherChanged = $false
+        $script:LauncherPath = $null
         $script:Uv = "uv"
         $script:Codex = "codex"
         $script:Icacls = "icacls.exe"
@@ -30,7 +32,7 @@ Describe "PowerFactory MCP transactional installer failure injection" {
         '{"commit":"known-good","release_path":"prior-release"}' | Set-Content -LiteralPath $activePath -Encoding UTF8
         $script:ExpectedActiveManifest = Get-Content -LiteralPath $activePath -Raw
 
-        Mock Stop-Process {}
+        Mock Stop-CreatedProcess { "stopped" }
         Mock Register-Codex {}
         Mock Remove-InstallerCodexRegistration {}
         Mock Restart-PriorRelease { "restarted:41003" }
@@ -57,7 +59,7 @@ Describe "PowerFactory MCP transactional installer failure injection" {
         $rollback.codex_registration | Should -Be "restored"
         $rollback.prior_release | Should -Be "restarted:41003"
         $rollback.powerfactory | Should -Be "no_persistent_engine_created; acquisition workers are disposable"
-        Should -Invoke -CommandName Stop-Process -Times 2 -Exactly
+        Should -Invoke -CommandName Stop-CreatedProcess -Times 2 -Exactly
         Should -Invoke -CommandName Register-Codex -Times 1 -Exactly
         Should -Invoke -CommandName Remove-Attempt -Times 1 -Exactly
 
