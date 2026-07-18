@@ -16,7 +16,7 @@ jobs:
   powershell-51:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Parse every PowerShell release artifact
         shell: powershell
@@ -45,12 +45,27 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
 
       - name: Run transactional installer tests
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          Import-Module Pester -MinimumVersion 5.5.0
-          $result = Invoke-Pester -Path tests/windows/InstallWindows.Transaction.Tests.ps1 -PassThru
+          Import-Module Pester -RequiredVersion 5.7.1
+          $config = New-PesterConfiguration
+          $config.Run.Path = "tests/windows/InstallWindows.Transaction.Tests.ps1"
+          $config.Run.PassThru = $true
+          $config.Output.Verbosity = "Detailed"
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputFormat = "NUnitXml"
+          $config.TestResult.OutputPath = "pester-results.xml"
+          $result = Invoke-Pester -Configuration $config
           if ($result.FailedCount -gt 0) { exit 1 }
+
+      - name: Upload Pester results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-pester-results
+          path: pester-results.xml
+          if-no-files-found: warn

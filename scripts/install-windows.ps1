@@ -30,6 +30,7 @@ $script:AgentExecutable = $null
 $script:LauncherChanged = $false
 $script:PriorLauncherContent = $null
 $script:LauncherPath = $null
+$script:CredentialCreated = $false
 
 function ConvertTo-CodexRegistrationFingerprint {
     param([object]$Value)
@@ -84,18 +85,69 @@ function Get-RequiredCommand {
 }
 
 function Invoke-Stage {
-    param([string]$Name, [scriptblock]$Action)
+    param([string]$Name, [scriptblock]$Action, [switch]$SkipPostActionInjection)
     $script:Stage = $Name
-    if ($env:POWERFACTORY_MCP_FAIL_STAGE -eq $Name) {
-        Stop-Install "Failure injection requested for $Name." "INJECTED_FAILURE"
-    }
     & $Action
+    if (-not $SkipPostActionInjection -and $env:POWERFACTORY_MCP_FAIL_STAGE -eq $Name) {
+        Stop-Install "Failure injection requested after $Name." "INJECTED_FAILURE"
+    }
+}
+
+function Invoke-PromotionCheckpoint {
+    param([string]$Name)
+    $script:Stage = "promotion:$Name"
+    if ($env:POWERFACTORY_MCP_FAIL_STAGE -eq $script:Stage) {
+        Stop-Install "Failure injection requested after $script:Stage." "INJECTED_FAILURE"
+    }
+}
+
+function Write-AttemptOwnership {
+    param([object]$Attempt)
+    Write-AtomicJson (Join-Path $Attempt.path "attempt-ownership.json") @{
+        schema_version = "powerfactory-mcp-attempt-ownership/v1"
+        attempt_id = $Attempt.id
+        path = $Attempt.path
+        commit = $Attempt.commit
+    }
+}
+
+function Test-AttemptOwnership {
+    param([string]$Path)
+    $ledger = Read-JsonFile (Join-Path $Path "attempt-ownership.json")
+    if (-not $ledger -or $ledger.schema_version -ne "powerfactory-mcp-attempt-ownership/v1") { return $false }
+    if (-not $ledger.attempt_id -or -not $ledger.path -or -not $ledger.commit) { return $false }
+    if ([string]$ledger.attempt_id -notmatch '^attempt-[0-9a-fA-F]{32}$') { return $false }
+    if ((Split-Path -Leaf $Path) -ne [string]$ledger.attempt_id) { return $false }
+    return [IO.Path]::GetFullPath([string]$ledger.path).TrimEnd('\\') -eq [IO.Path]::GetFullPath($Path).TrimEnd('\\')
+}
+
+function Test-PendingReleaseOwnership {
+    param([string]$Path)
+    $marker = Read-JsonFile (Join-Path $Path "install-pending.json")
+    if (-not $marker -or $marker.schema_version -ne "powerfactory-mcp-pending/v1") { return $false }
+    $attempt = Read-JsonFile (Join-Path $Path "attempt-ownership.json")
+    if (-not $attempt -or $attempt.schema_version -ne "powerfactory-mcp-attempt-ownership/v1") { return $false }
+    if (-not $marker.attempt_id -or -not $marker.commit -or -not $marker.release_path) { return $false }
+    if ([string]$marker.attempt_id -notmatch '^attempt-[0-9a-fA-F]{32}$' -or [string]$marker.commit -notmatch '^[0-9a-fA-F]{40}$') { return $false }
+    if ($attempt.attempt_id -ne $marker.attempt_id -or $attempt.commit -ne $marker.commit) { return $false }
+    $expectedName = "release-$(([string]$marker.commit).Substring(0, 12))-$(([string]$marker.attempt_id).Substring(8, 12))"
+    if ((Split-Path -Leaf $Path) -ne $expectedName) { return $false }
+    return [IO.Path]::GetFullPath([string]$marker.release_path).TrimEnd('\\') -eq [IO.Path]::GetFullPath($Path).TrimEnd('\\')
 }
 
 function Invoke-CheckedCommand {
     param([string]$FilePath, [string[]]$ArgumentList, [string]$Failure)
     & $FilePath @ArgumentList
     if ($LASTEXITCODE -ne 0) { Stop-Install "$Failure (exit code $LASTEXITCODE)." "COMMAND_FAILED" $LASTEXITCODE }
+}
+
+function Get-StagedCommit {
+    param([string]$Git, [string]$Source)
+    $commit = (& $Git -C $Source rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-fA-F]{40}$') {
+        Stop-Install "Could not determine staged commit." "SOURCE_INVALID"
+    }
+    return $commit
 }
 
 function Read-JsonFile {
@@ -108,30 +160,34 @@ function Read-JsonFile {
 function Write-AtomicJson {
     param([string]$Path, [object]$Value)
     $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+    $backup = "$Path.$([guid]::NewGuid().ToString('N')).bak"
     try {
         $Value | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding UTF8 -NoNewline
         if (Test-Path -LiteralPath $Path) {
-            [System.IO.File]::Replace($temporary, $Path, $null)
+            [System.IO.File]::Replace($temporary, $Path, $backup)
         } else {
             [System.IO.File]::Move($temporary, $Path)
         }
     } finally {
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
     }
 }
 
 function Write-AtomicText {
     param([string]$Path, [string]$Value)
     $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+    $backup = "$Path.$([guid]::NewGuid().ToString('N')).bak"
     try {
         Set-Content -LiteralPath $temporary -Value $Value -Encoding UTF8 -NoNewline
         if (Test-Path -LiteralPath $Path) {
-            [System.IO.File]::Replace($temporary, $Path, $null)
+            [System.IO.File]::Replace($temporary, $Path, $backup)
         } else {
             [System.IO.File]::Move($temporary, $Path)
         }
     } finally {
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -469,17 +525,48 @@ function Invoke-InstallerRollback {
     # a persistent PowerFactory owner, so rollback has no broad engine kill path.
     $rollback.powerfactory = "no_persistent_engine_created; acquisition workers are disposable"
     if ($script:Attempt) { $rollback.attempt = Remove-Attempt $script:Attempt.path $script:Icacls }
+    if (-not $script:CredentialCreated) {
+        $rollback.credentials = "not_created"
+    } elseif ($rollback.attempt -in @("removed", "removed_after_attempt_acl_repair", "not_present")) {
+        $rollback.credentials = "removed_with_attempt"
+    } else {
+        $rollback.credentials = "retained_attempt_cleanup_failed"
+    }
     try { Write-FailureReport $Reports $ErrorRecord $Runtime $rollback } catch { }
     return $rollback
 }
 
 $script:Uv = $null; $script:Git = $null; $script:Codex = $null; $script:Icacls = $null; $script:Taskkill = $null
 $script:Runtime = $null
-$root = [IO.Path]::GetFullPath($InstallRoot)
-$attempts = Join-Path $root "attempts"; $releases = Join-Path $root "releases"; $reports = Join-Path $root "failure-reports"; $activePath = Join-Path $root "active.json"
-$script:ManagedCleanupRoots = @($attempts, $releases)
+$script:ManagedCleanupRoots = @()
 
-if ($TestHarness) { return }
+function Invoke-InstallerTransaction {
+    param([string]$TransactionRoot = $InstallRoot)
+
+    # This is intentionally the sole orchestrator. Tests invoke it with the
+    # same stage functions and rollback path as a real installation.
+    $root = [IO.Path]::GetFullPath($TransactionRoot)
+    $attempts = Join-Path $root "attempts"
+    $releases = Join-Path $root "releases"
+    $reports = Join-Path $root "failure-reports"
+    $activePath = Join-Path $root "active.json"
+    $script:ManagedCleanupRoots = @($attempts, $releases)
+    $script:Stage = "preflight"
+    $script:Attempt = $null
+    $script:Prior = $null
+    $script:PriorCodexOwned = $false
+    $script:PriorRegistration = $null
+    $script:PriorWasStopped = $false
+    $script:CodexChanged = $false
+    $script:StagedServer = $null
+    $script:FinalServer = $null
+    $script:Mutex = $null
+    $script:Token = $null
+    $script:AgentExecutable = $null
+    $script:CredentialCreated = $false
+    $script:LauncherChanged = $false
+    $script:PriorLauncherContent = $null
+    $script:LauncherPath = $null
 
 try {
     Invoke-Stage "preflight" {
@@ -487,7 +574,7 @@ try {
         if ($env:OS -ne "Windows_NT") { Stop-Install "This installer supports Windows only." "PLATFORM_UNSUPPORTED" }
         if ($PSVersionTable.PSVersion -lt [version]"5.1") { Stop-Install "PowerShell 5.1 or newer is required." "PLATFORM_UNSUPPORTED" }
         $mutexDigest = (Get-Sha256Hex $root).Substring(0, 24)
-        $script:Mutex = New-Object System.Threading.Mutex -ArgumentList @($false, "Local\\PowerFactoryMCP-$mutexDigest")
+        $script:Mutex = New-Object System.Threading.Mutex -ArgumentList @($false, "Local\PowerFactoryMCP-$mutexDigest")
         try { $mutexAcquired = $script:Mutex.WaitOne(0) }
         catch [System.Threading.AbandonedMutexException] { $mutexAcquired = $true }
         if (-not $mutexAcquired) { Stop-Install "Another PowerFactory MCP installation is already running." "INSTALLER_BUSY" }
@@ -503,11 +590,22 @@ try {
         # only to stop their recorded server, then their own directory is removed.
         Get-ChildItem -LiteralPath $attempts -Directory -ErrorAction SilentlyContinue | ForEach-Object {
             $attemptDirectory = $_.FullName
+            if (-not (Test-AttemptOwnership $attemptDirectory)) {
+                Stop-Install "A stale attempt cannot be proven installer-owned." "OWNERSHIP_UNPROVEN"
+            }
             Get-ChildItem -LiteralPath $attemptDirectory -Filter "*ownership.json" -File -ErrorAction SilentlyContinue | ForEach-Object {
                 $ledger = Read-JsonFile $_.FullName
-                if ($ledger) { Stop-OwnedProcess $ledger | Out-Null }
+                if ($ledger -and $ledger.schema_version -eq "powerfactory-mcp-process-ownership/v1") {
+                    $stopResult = Stop-OwnedProcess $ledger
+                    if ($stopResult -notin @("stopped", "already_stopped")) {
+                        Stop-Install "A stale attempt process cannot be proven installer-owned." "OWNERSHIP_UNPROVEN"
+                    }
+                }
             }
-            Remove-Attempt $attemptDirectory $script:Icacls | Out-Null
+            $removeResult = Remove-Attempt $attemptDirectory $script:Icacls
+            if ($removeResult -notin @("removed", "removed_after_attempt_acl_repair", "not_present")) {
+                Stop-Install "A stale attempt could not be removed safely." "STALE_ATTEMPT_RECOVERY_FAILED"
+            }
         }
         Get-ChildItem -LiteralPath $releases -Directory -ErrorAction SilentlyContinue | ForEach-Object {
             $releaseDirectory = $_.FullName
@@ -516,16 +614,22 @@ try {
                 if ($script:Prior -and $script:Prior.release_path -eq $releaseDirectory) {
                     Remove-Item -LiteralPath $pendingMarker -Force -ErrorAction SilentlyContinue
                 } else {
+                    if (-not (Test-PendingReleaseOwnership $releaseDirectory)) {
+                        Stop-Install "A pending release cannot be proven installer-owned." "OWNERSHIP_UNPROVEN"
+                    }
                     Get-ChildItem -LiteralPath $releaseDirectory -Filter "*ownership.json" -File -ErrorAction SilentlyContinue | ForEach-Object {
                         $ledger = Read-JsonFile $_.FullName
-                        if ($ledger) {
+                        if ($ledger -and $ledger.schema_version -eq "powerfactory-mcp-process-ownership/v1") {
                             $stopResult = Stop-OwnedProcess $ledger
                             if ($stopResult -notin @("stopped", "already_stopped")) {
                                 Stop-Install "A pending release process cannot be proven installer-owned." "OWNERSHIP_UNPROVEN"
                             }
                         }
                     }
-                    Remove-Attempt $releaseDirectory $script:Icacls | Out-Null
+                    $removeResult = Remove-Attempt $releaseDirectory $script:Icacls
+                    if ($removeResult -notin @("removed", "removed_after_attempt_acl_repair", "not_present")) {
+                        Stop-Install "A pending release could not be removed safely." "STALE_RELEASE_RECOVERY_FAILED"
+                    }
                 }
             }
         }
@@ -541,16 +645,19 @@ try {
 
     Invoke-Stage "source" {
         $id = "attempt-$([guid]::NewGuid().ToString('N'))"; $path = Join-Path $attempts $id
-        New-Item -ItemType Directory -Path $path -Force | Out-Null; Set-AttemptPrivateAcl $path $script:Icacls
         $script:Attempt = [PSCustomObject]@{ id=$id; path=$path; source=(Join-Path $path "source"); state=(Join-Path $path "state"); commit="unknown" }
+        New-Item -ItemType Directory -Path $path -Force | Out-Null
+        # Ownership is durable before ACL or source setup can fail.
+        Write-AttemptOwnership $script:Attempt
+        Set-AttemptPrivateAcl $path $script:Icacls
         New-Item -ItemType Directory -Path $script:Attempt.source -Force | Out-Null
         Invoke-CheckedCommand $script:Git @("-C", $script:Attempt.source, "init") "Source initialization failed"
         Invoke-CheckedCommand $script:Git @("-C", $script:Attempt.source, "remote", "add", "origin", $RepositoryUrl) "Source remote setup failed"
         Invoke-CheckedCommand $script:Git @("-C", $script:Attempt.source, "fetch", "--depth", "1", "origin", $Ref) "Source fetch failed"
         Invoke-CheckedCommand $script:Git @("-C", $script:Attempt.source, "checkout", "--detach", "FETCH_HEAD") "Source checkout failed"
-        $script:Attempt.commit = (& $script:Git -C $script:Attempt.source rev-parse HEAD).Trim()
-        if ($LASTEXITCODE -ne 0 -or $script:Attempt.commit -notmatch '^[0-9a-fA-F]{40}$') { Stop-Install "Could not determine staged commit." "SOURCE_INVALID" }
+        $script:Attempt.commit = Get-StagedCommit $script:Git $script:Attempt.source
         if ($Ref -match '^[0-9a-fA-F]{40}$' -and $script:Attempt.commit -ne $Ref.ToLowerInvariant()) { Stop-Install "Staged commit does not match the bootstrap revision." "SOURCE_INVALID" }
+        Write-AttemptOwnership $script:Attempt
     }
 
     Invoke-Stage "environment" {
@@ -571,6 +678,7 @@ try {
         } finally { Pop-Location }
         $script:Token = (Get-Content -LiteralPath (Join-Path $script:Attempt.state "mcp-token") -Raw).Trim()
         if ($script:Token.Length -lt 32) { Stop-Install "Staged MCP credential is invalid." "CREDENTIAL_INVALID" }
+        $script:CredentialCreated = $true
     }
 
     Invoke-Stage "temporary_mcp_health" {
@@ -605,21 +713,27 @@ try {
         finally { Pop-Location }
     }
 
-    Invoke-Stage "promotion" {
+    Invoke-Stage "promotion" -SkipPostActionInjection {
         if ($script:StagedServer) {
             $stagedStop = Stop-CreatedProcess $script:StagedServer
             if ($stagedStop -notin @("stopped", "already_stopped")) { Stop-Install "The staged MCP server did not stop for cutover." "PROCESS_STOP_FAILED" }
+            $script:StagedServer = $null
         }
-        Write-AtomicJson (Join-Path $script:Attempt.path "install-pending.json") @{ schema_version="powerfactory-mcp-pending/v1"; attempt_id=$script:Attempt.id; commit=$script:Attempt.commit }
         $releaseName = "release-$($script:Attempt.commit.Substring(0, 12))-$($script:Attempt.id.Substring(8, 12))"
         $releasePath = Join-Path $releases $releaseName
+        Write-AtomicJson (Join-Path $script:Attempt.path "install-pending.json") @{ schema_version="powerfactory-mcp-pending/v1"; attempt_id=$script:Attempt.id; commit=$script:Attempt.commit; release_path=$releasePath }
         Move-Item -LiteralPath $script:Attempt.path -Destination $releasePath
         $script:Attempt.path = $releasePath; $script:Attempt.source = Join-Path $releasePath "source"; $script:Attempt.state = Join-Path $releasePath "state"
         $script:AgentExecutable = Join-Path $script:Attempt.source ".venv\\Scripts\\powerfactory-agent.exe"
+        Invoke-PromotionCheckpoint "directory_move"
         $script:FinalServer = Start-McpServer -AgentExecutable $script:AgentExecutable -Source $script:Attempt.source -Config (Join-Path $script:Attempt.state "powerfactory-agent.json") -ListenPort $Port -Token $script:Token -OwnershipPath (Join-Path $releasePath "ownership.json") -Scope "pending_release"
+        Invoke-PromotionCheckpoint "final_mcp_health"
         Invoke-AcquisitionProbe $script:AgentExecutable $script:Attempt.source (Join-Path $script:Attempt.state "powerfactory-agent.json") (Join-Path $releasePath "acquisition-ownership.json")
+        Invoke-PromotionCheckpoint "final_acquisition_probe"
         $script:LauncherPath = Join-Path $root "Start-PowerFactoryCodex.ps1"
         Write-CodexLauncher $script:LauncherPath $root $script:Codex | Out-Null
+        Invoke-PromotionCheckpoint "launcher_update"
+        Invoke-PromotionCheckpoint "before_active_manifest"
         Write-AtomicJson $activePath @{ schema_version="powerfactory-mcp-active/v1"; release_path=$releasePath; commit=$script:Attempt.commit; port=$Port }
         Remove-Item -LiteralPath (Join-Path $releasePath "install-pending.json") -Force -ErrorAction SilentlyContinue
     }
@@ -633,4 +747,9 @@ catch {
 }
 finally {
     if ($script:Mutex) { try { $script:Mutex.ReleaseMutex() } catch { }; $script:Mutex.Dispose() }
+}
+}
+
+if (-not $TestHarness) {
+    Invoke-InstallerTransaction
 }

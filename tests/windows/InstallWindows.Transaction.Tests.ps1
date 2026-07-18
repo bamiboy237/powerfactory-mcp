@@ -1,114 +1,217 @@
-# Run on Windows with Pester 5. The installer is dot-sourced in TestHarness
-# mode, so every injected stage executes its production rollback function while
-# git, uv, Codex, PowerFactory, and process effects remain mocked.
-$installer = Join-Path $PSScriptRoot "..\\..\\scripts\\install-windows.ps1"
-$stages = @(
-    "preflight", "source", "environment", "secure_configuration",
-    "temporary_mcp_health", "codex_registration", "cutover_prior_service_drain",
-    "acquisition_probe", "promotion"
+# These tests invoke the production transaction function. External commands and
+# PowerFactory are mocked; filesystem state and rollback decisions are real.
+$failureCases = @(
+    @{ Name = "preflight"; Stage = "preflight"; Attempt = $false; Stops = 0; RegistrationRemoved = 0; CredentialState = "not_created" },
+    @{ Name = "source"; Stage = "source"; Attempt = $true; Stops = 0; RegistrationRemoved = 0; CredentialState = "not_created" },
+    @{ Name = "environment"; Stage = "environment"; Attempt = $true; Stops = 0; RegistrationRemoved = 0; CredentialState = "not_created" },
+    @{ Name = "secure configuration"; Stage = "secure_configuration"; Attempt = $true; Stops = 0; RegistrationRemoved = 0; CredentialState = "removed_with_attempt" },
+    @{ Name = "temporary MCP health"; Stage = "temporary_mcp_health"; Attempt = $true; Stops = 1; RegistrationRemoved = 0; CredentialState = "removed_with_attempt" },
+    @{ Name = "Codex registration"; Stage = "codex_registration"; Attempt = $true; Stops = 1; RegistrationRemoved = 1; CredentialState = "removed_with_attempt" },
+    @{ Name = "prior service drain"; Stage = "cutover_prior_service_drain"; Attempt = $true; Stops = 1; RegistrationRemoved = 1; CredentialState = "removed_with_attempt" },
+    @{ Name = "acquisition probe"; Stage = "acquisition_probe"; Attempt = $true; Stops = 1; RegistrationRemoved = 1; CredentialState = "removed_with_attempt" },
+    @{ Name = "release move"; Stage = "promotion:directory_move"; Attempt = $true; Stops = 1; RegistrationRemoved = 1; CredentialState = "removed_with_attempt" },
+    @{ Name = "final MCP health"; Stage = "promotion:final_mcp_health"; Attempt = $true; Stops = 2; RegistrationRemoved = 1; CredentialState = "removed_with_attempt" },
+    @{ Name = "final acquisition"; Stage = "promotion:final_acquisition_probe"; Attempt = $true; Stops = 2; RegistrationRemoved = 1; CredentialState = "removed_with_attempt" },
+    @{ Name = "launcher update"; Stage = "promotion:launcher_update"; Attempt = $true; Stops = 2; RegistrationRemoved = 1; CredentialState = "removed_with_attempt" },
+    @{ Name = "active manifest commit"; Stage = "promotion:before_active_manifest"; Attempt = $true; Stops = 2; RegistrationRemoved = 1; CredentialState = "removed_with_attempt" }
 )
 
-Describe "PowerFactory MCP transactional installer failure injection" {
+Describe "PowerFactory MCP transactional installer" {
     BeforeAll {
-        . $installer -TestHarness
+        $script:InstallerPath = Join-Path $PSScriptRoot "..\..\scripts\install-windows.ps1"
+        . $script:InstallerPath -TestHarness
     }
 
     BeforeEach {
-        $script:Stage = "preflight"
-        $script:Attempt = [PSCustomObject]@{ id = "attempt-test"; path = (Join-Path $TestDrive "attempt-test"); commit = "test-sha" }
-        $script:Prior = [PSCustomObject]@{ release_path = (Join-Path $TestDrive "prior-release"); port = 8787 }
-        $script:PriorWasStopped = $true
-        $script:CodexChanged = $true
-        $script:LauncherChanged = $false
-        $script:LauncherPath = $null
-        $script:Uv = "uv"
-        $script:Codex = "codex"
-        $script:Icacls = "icacls.exe"
-        $script:Runtime = [PSCustomObject]@{ PythonVersion = "3.14" }
-        $script:StagedServer = [PSCustomObject]@{ Id = 41001; HasExited = $false }
-        $script:FinalServer = [PSCustomObject]@{ Id = 41002; HasExited = $false }
-        New-Item -ItemType Directory -Force -Path $script:Attempt.path, $script:Prior.release_path | Out-Null
-        $activePath = Join-Path $TestDrive "active.json"
-        '{"commit":"known-good","release_path":"prior-release"}' | Set-Content -LiteralPath $activePath -Encoding UTF8
-        $script:ExpectedActiveManifest = Get-Content -LiteralPath $activePath -Raw
+        $script:CaseRoot = Join-Path $TestDrive "case-$([guid]::NewGuid().ToString('N'))"
+        $script:attempts = Join-Path $script:CaseRoot "attempts"
+        $script:releases = Join-Path $script:CaseRoot "releases"
+        $script:reports = Join-Path $script:CaseRoot "failure-reports"
+        $script:activePath = Join-Path $script:CaseRoot "active.json"
+        $script:UnrelatedPath = Join-Path $TestDrive "unrelated"
+        New-Item -ItemType Directory -Path $script:attempts, $script:releases, $script:reports, $script:UnrelatedPath -Force | Out-Null
+        "preserve" | Set-Content -LiteralPath (Join-Path $script:UnrelatedPath "sentinel.txt")
+        $script:OriginalOS = $env:OS
+        $env:OS = "Windows_NT"
 
+        Mock Get-RequiredCommand { "tool.exe" }
+        Mock Resolve-PowerFactoryRuntime { [PSCustomObject]@{ PythonVersion = "3.14"; Path = "C:\PowerFactory\powerfactory.pyd" } }
+        Mock Get-CodexRegistrationFingerprint { [PSCustomObject]@{ state = "absent"; fingerprint = $null } }
+        Mock Invoke-CheckedCommand {
+            param($FilePath, $ArgumentList, $Failure)
+            if ($Failure -eq "Python environment setup failed") {
+                $bin = Join-Path $script:Attempt.source ".venv\Scripts"
+                New-Item -ItemType Directory -Path $bin -Force | Out-Null
+                New-Item -ItemType File -Path (Join-Path $bin "powerfactory-agent.exe") -Force | Out-Null
+            }
+            if ($Failure -eq "MCP initialization failed") {
+                New-Item -ItemType Directory -Path $script:Attempt.state -Force | Out-Null
+                "0123456789012345678901234567890123456789" | Set-Content -LiteralPath (Join-Path $script:Attempt.state "mcp-token") -NoNewline
+            }
+        }
+        Mock Get-StagedCommit { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+        Mock Set-AttemptPrivateAcl {}
+        Mock Start-McpServer { [PSCustomObject]@{ Id = 41001; HasExited = $false } }
         Mock Stop-CreatedProcess { "stopped" }
-        Mock Register-Codex {}
+        Mock Stop-OwnedProcess { "already_stopped" }
+        Mock Invoke-AcquisitionProbe {}
+        Mock Register-Codex { $script:CodexChanged = $true }
         Mock Remove-InstallerCodexRegistration {}
-        Mock Restart-PriorRelease { "restarted:41003" }
-        Mock Remove-Attempt { "removed" }
+        Mock Restart-PriorRelease { "not_needed" }
+        Mock Get-FreeLoopbackPort { 41234 }
+        Mock Test-McpInitialize { $true }
     }
 
-    It "rolls back exactly after injected <stage> failure" -ForEach $stages {
-        param($stage)
-        $env:POWERFACTORY_MCP_FAIL_STAGE = $stage
-        $reports = Join-Path $TestDrive "failure-reports"
-        $activePath = Join-Path $TestDrive "active.json"
+    AfterEach {
+        if ($null -eq $script:OriginalOS) { Remove-Item Env:OS -ErrorAction SilentlyContinue } else { $env:OS = $script:OriginalOS }
+        Remove-Item Env:POWERFACTORY_MCP_FAIL_STAGE -ErrorAction SilentlyContinue
+    }
 
-        try {
-            Invoke-Stage $stage { throw "the injected hook must fail before this action" }
-            throw "expected injected failure"
-        } catch {
-            $rollback = Invoke-InstallerRollback $_ $reports $script:Runtime
-        } finally {
-            Remove-Item Env:POWERFACTORY_MCP_FAIL_STAGE -ErrorAction SilentlyContinue
+    It "rolls back only resources created before <Name>" -ForEach $failureCases {
+        param($Name, $Stage, $Attempt, $Stops, $RegistrationRemoved, $CredentialState)
+        $env:POWERFACTORY_MCP_FAIL_STAGE = $Stage
+
+        $caught = $null
+        try { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } catch { $caught = $_ }
+
+        $caught | Should -Not -BeNullOrEmpty
+        $caught.Exception.Data["category"] | Should -Be "INJECTED_FAILURE"
+        Test-Path -LiteralPath $script:activePath | Should -BeFalse
+        Should -Invoke Stop-CreatedProcess -Times $Stops -Exactly
+        Should -Invoke Remove-InstallerCodexRegistration -Times $RegistrationRemoved -Exactly
+        Should -Invoke Register-Codex -Times $(if ($RegistrationRemoved) { 1 } else { 0 }) -Exactly
+        if ($Attempt) {
+            @(Get-ChildItem -LiteralPath $script:attempts -Directory).Count | Should -Be 0
+            @(Get-ChildItem -LiteralPath $script:releases -Directory).Count | Should -Be 0
         }
+        Test-Path -LiteralPath (Join-Path $script:UnrelatedPath "sentinel.txt") | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:CaseRoot "Start-PowerFactoryCodex.ps1") | Should -BeFalse
 
-        (Get-Content -LiteralPath $activePath -Raw) | Should -Be $script:ExpectedActiveManifest
-        $rollback.attempt | Should -Be "removed"
-        $rollback.codex_registration | Should -Be "restored"
-        $rollback.prior_release | Should -Be "restarted:41003"
-        $rollback.powerfactory | Should -Be "no_persistent_engine_created; acquisition workers are disposable"
-        Should -Invoke -CommandName Stop-CreatedProcess -Times 2 -Exactly
-        Should -Invoke -CommandName Register-Codex -Times 1 -Exactly
-        Should -Invoke -CommandName Remove-Attempt -Times 1 -Exactly
-
-        $reportsFound = @(Get-ChildItem -LiteralPath $reports -Filter "*.json")
-        $reportsFound.Count | Should -Be 1
-        $report = Get-Content -LiteralPath $reportsFound[0].FullName -Raw | ConvertFrom-Json
-        $report.stage | Should -Be $stage
+        $reportFiles = @(Get-ChildItem -LiteralPath $script:reports -Filter "*.json")
+        $reportFiles.Count | Should -Be 1
+        $reportText = Get-Content -LiteralPath $reportFiles[0].FullName -Raw
+        $report = $reportText | ConvertFrom-Json
+        $report.stage | Should -Be $Stage
         $report.category | Should -Be "INJECTED_FAILURE"
-        $report.rollback.attempt | Should -Be "removed"
-        (Get-Content -LiteralPath $reportsFound[0].FullName -Raw) | Should -Not -Match "mcp-token|Bearer|licen[cs]e|password"
+        $report.rollback.credentials | Should -Be $CredentialState
+        $reportText | Should -Not -Match "0123456789012345678901234567890123456789|Bearer|password|licen[cs]e|customer model"
     }
 
-    It "removes only the registration created by a failed fresh install" {
-        $script:Prior = $null
-        $script:PriorWasStopped = $false
-        $reports = Join-Path $TestDrive "failure-reports-fresh"
-        $env:POWERFACTORY_MCP_FAIL_STAGE = "promotion"
+    It "leaves an owned prior registration untouched and restarts only the service it stopped" {
+        $prior = Join-Path $script:releases "release-prior"
+        New-Item -ItemType Directory -Path (Join-Path $prior "state"), (Join-Path $prior "source\.venv\Scripts") -Force | Out-Null
+        "token" | Set-Content -LiteralPath (Join-Path $prior "state\mcp-token")
+        '{"schema_version":"powerfactory-mcp-process-ownership/v1","pid":1,"process_start_ticks":1,"command_kind":"mcp_server","config_path":"config"}' | Set-Content -LiteralPath (Join-Path $prior "ownership.json")
+        @{ schema_version = "powerfactory-mcp-active/v1"; release_path = $prior; commit = "known-good"; port = 8787 } | ConvertTo-Json | Set-Content -LiteralPath $script:activePath
+        $expectedActiveManifest = Get-Content -LiteralPath $script:activePath -Raw
+        Mock Get-CodexRegistrationFingerprint { [PSCustomObject]@{ state = "present"; fingerprint = [PSCustomObject]@{ name = "powerfactory-agent"; endpoint = "http://127.0.0.1:8787/mcp"; token_env_var = "POWERFACTORY_AGENT_MCP_TOKEN" } } }
+        Mock Test-OwnedCodexRegistration { $true }
+        Mock Stop-OwnedProcess { "stopped" }
+        Mock Restart-PriorRelease { "restarted:41003" }
+        $env:POWERFACTORY_MCP_FAIL_STAGE = "acquisition_probe"
 
-        try {
-            Invoke-Stage "promotion" { throw "the injected hook must fail before this action" }
-            throw "expected injected failure"
-        } catch {
-            $rollback = Invoke-InstallerRollback $_ $reports $script:Runtime
-        } finally {
-            Remove-Item Env:POWERFACTORY_MCP_FAIL_STAGE -ErrorAction SilentlyContinue
-        }
+        { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } | Should -Throw
 
-        $rollback.codex_registration | Should -Be "removed_new_registration"
-        Should -Invoke -CommandName Remove-InstallerCodexRegistration -Times 1 -Exactly
-        Should -Invoke -CommandName Register-Codex -Times 0 -Exactly
+        (Get-Content -LiteralPath $script:activePath -Raw) | Should -Be $expectedActiveManifest
+        Should -Invoke Register-Codex -Times 0 -Exactly
+        Should -Invoke Remove-InstallerCodexRegistration -Times 0 -Exactly
+        Should -Invoke Restart-PriorRelease -Times 1 -Exactly
+        Test-Path -LiteralPath $prior | Should -BeTrue
     }
 
-    It "does not recursively repair ACLs outside a disposable attempt" {
-        $source = Get-Content -LiteralPath $installer -Raw
+    It "completes a fresh install and an idempotent rerun without rewriting Codex registration" {
+        Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot
+        $first = Get-Content -LiteralPath $script:activePath -Raw | ConvertFrom-Json
+        Test-Path -LiteralPath $first.release_path | Should -BeTrue
+        $first.commit | Should -Be "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+        Mock Get-CodexRegistrationFingerprint { [PSCustomObject]@{ state = "present"; fingerprint = [PSCustomObject]@{ name = "powerfactory-agent"; endpoint = "http://127.0.0.1:8787/mcp"; token_env_var = "POWERFACTORY_AGENT_MCP_TOKEN" } } }
+        Mock Test-OwnedCodexRegistration { $true }
+        Mock Stop-OwnedProcess { "stopped" }
+        Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot
+
+        $second = Get-Content -LiteralPath $script:activePath -Raw | ConvertFrom-Json
+        $second.commit | Should -Be $first.commit
+        Test-Path -LiteralPath $first.release_path | Should -BeTrue
+        Test-Path -LiteralPath $second.release_path | Should -BeTrue
+        Should -Invoke Register-Codex -Times 1 -Exactly
+        Should -Invoke Remove-InstallerCodexRegistration -Times 0 -Exactly
+        @(Get-ChildItem -LiteralPath $script:attempts -Directory).Count | Should -Be 0
+        @(Get-ChildItem -LiteralPath $script:reports -Filter "*.json").Count | Should -Be 0
+    }
+
+    It "recovers a valid stale attempt and a valid interrupted pending release" {
+        $staleId = "attempt-11111111111111111111111111111111"
+        $stalePath = Join-Path $script:attempts $staleId
+        New-Item -ItemType Directory -Path $stalePath -Force | Out-Null
+        @{ schema_version = "powerfactory-mcp-attempt-ownership/v1"; attempt_id = $staleId; path = $stalePath; commit = "unknown" } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stalePath "attempt-ownership.json")
+
+        $pendingId = "attempt-22222222222222222222222222222222"
+        $pendingCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        $pendingName = "release-$($pendingCommit.Substring(0, 12))-$($pendingId.Substring(8, 12))"
+        $pendingPath = Join-Path $script:releases $pendingName
+        New-Item -ItemType Directory -Path $pendingPath -Force | Out-Null
+        @{ schema_version = "powerfactory-mcp-attempt-ownership/v1"; attempt_id = $pendingId; path = (Join-Path $script:attempts $pendingId); commit = $pendingCommit } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $pendingPath "attempt-ownership.json")
+        @{ schema_version = "powerfactory-mcp-pending/v1"; attempt_id = $pendingId; commit = $pendingCommit; release_path = $pendingPath } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $pendingPath "install-pending.json")
+
+        Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot
+
+        Test-Path -LiteralPath $stalePath | Should -BeFalse
+        Test-Path -LiteralPath $pendingPath | Should -BeFalse
+        Test-Path -LiteralPath $script:activePath | Should -BeTrue
+    }
+
+    It "refuses an unknown Codex registration before creating an attempt" {
+        Mock Get-CodexRegistrationFingerprint { [PSCustomObject]@{ state = "unknown_schema"; fingerprint = $null } }
+        $caught = $null
+        try { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } catch { $caught = $_ }
+
+        $caught | Should -Not -BeNullOrEmpty
+        $caught.Exception.Data["category"] | Should -Be "CODEX_OWNERSHIP_UNPROVEN"
+        @(Get-ChildItem -LiteralPath $script:attempts -Directory).Count | Should -Be 0
+        Should -Invoke Register-Codex -Times 0 -Exactly
+        Should -Invoke Remove-InstallerCodexRegistration -Times 0 -Exactly
+    }
+
+    It "preserves a stale attempt when process ownership cannot be proven" {
+        $staleId = "attempt-33333333333333333333333333333333"
+        $stalePath = Join-Path $script:attempts $staleId
+        New-Item -ItemType Directory -Path $stalePath -Force | Out-Null
+        @{ schema_version = "powerfactory-mcp-attempt-ownership/v1"; attempt_id = $staleId; path = $stalePath; commit = "unknown" } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stalePath "attempt-ownership.json")
+        @{ schema_version = "powerfactory-mcp-process-ownership/v1"; pid = 7; process_start_ticks = 1; command_kind = "mcp_server"; config_path = "config" } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stalePath "ownership.json")
+        Mock Stop-OwnedProcess { "identity_mismatch" }
+        $caught = $null
+        try { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } catch { $caught = $_ }
+
+        $caught.Exception.Data["category"] | Should -Be "OWNERSHIP_UNPROVEN"
+        Test-Path -LiteralPath $stalePath | Should -BeTrue
+    }
+
+    It "rejects a pending release whose marker is not bound to its exact path" {
+        $pendingId = "attempt-44444444444444444444444444444444"
+        $pendingCommit = "cccccccccccccccccccccccccccccccccccccccc"
+        $pendingName = "release-$($pendingCommit.Substring(0, 12))-$($pendingId.Substring(8, 12))"
+        $pendingPath = Join-Path $script:releases $pendingName
+        New-Item -ItemType Directory -Path $pendingPath -Force | Out-Null
+        @{ schema_version = "powerfactory-mcp-attempt-ownership/v1"; attempt_id = $pendingId; path = "wrong"; commit = $pendingCommit } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $pendingPath "attempt-ownership.json")
+        @{ schema_version = "powerfactory-mcp-pending/v1"; attempt_id = $pendingId; commit = $pendingCommit; release_path = (Join-Path $script:releases "wrong") } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $pendingPath "install-pending.json")
+        $caught = $null
+        try { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } catch { $caught = $_ }
+
+        $caught.Exception.Data["category"] | Should -Be "OWNERSHIP_UNPROVEN"
+        Test-Path -LiteralPath $pendingPath | Should -BeTrue
+    }
+
+    It "never recursively repairs ACLs outside the disposable path being deleted" {
+        $source = Get-Content -LiteralPath $script:InstallerPath -Raw
         $acl = $source.Substring($source.IndexOf("function Set-AttemptPrivateAcl"), $source.IndexOf("function Remove-Attempt") - $source.IndexOf("function Set-AttemptPrivateAcl"))
         $acl | Should -Not -Match '"/T"'
         $source | Should -Match "attempt being removed"
+        $source | Should -Match "refused_outside_managed_roots"
     }
 
     It "accepts only a complete matching Codex registration fingerprint" {
-        $matching = [PSCustomObject]@{
-            name = "powerfactory-agent"
-            transport = [PSCustomObject]@{
-                type = "streamable_http"
-                url = "http://127.0.0.1:8787/mcp"
-                bearer_token_env_var = "POWERFACTORY_AGENT_MCP_TOKEN"
-            }
-        }
-
+        $matching = [PSCustomObject]@{ name = "powerfactory-agent"; transport = [PSCustomObject]@{ type = "streamable_http"; url = "http://127.0.0.1:8787/mcp"; bearer_token_env_var = "POWERFACTORY_AGENT_MCP_TOKEN" } }
         (ConvertTo-CodexRegistrationFingerprint $matching).endpoint | Should -Be "http://127.0.0.1:8787/mcp"
         $matching.transport.url = "https://example.invalid/mcp"
         ConvertTo-CodexRegistrationFingerprint $matching | Should -BeNullOrEmpty

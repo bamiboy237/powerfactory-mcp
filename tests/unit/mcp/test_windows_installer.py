@@ -34,7 +34,9 @@ def test_installer_stages_guid_attempts_and_promotes_an_atomic_active_manifest()
     assert 'Join-Path $root "failure-reports"' in source
     assert '"attempt-$([guid]::NewGuid().ToString(\'N\'))"' in source
     assert "function Write-AtomicJson" in source
-    assert "[System.IO.File]::Replace($temporary, $Path, $null)" in source
+    assert "[System.IO.File]::Replace($temporary, $Path, $backup)" in source
+    assert "[System.IO.File]::Replace($temporary, $Path, $null)" not in source
+    assert 'Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue' in source
     assert "active.json" in source
     assert "StateDir" not in source
     assert "Read-Host" not in source
@@ -56,8 +58,26 @@ def test_transaction_has_explicit_failure_injection_and_all_required_stages() ->
         "promotion",
     )
     assert "POWERFACTORY_MCP_FAIL_STAGE" in source
+    assert "function Invoke-InstallerTransaction" in source
+    assert "param([string]$TransactionRoot = $InstallRoot)" in source
+    assert "$root = [IO.Path]::GetFullPath($TransactionRoot)" in source
+    assert "Failure injection requested after" in source
     positions = [source.index(f'Invoke-Stage "{stage}"') for stage in stages]
     assert positions == sorted(positions)
+    for checkpoint in (
+        "directory_move",
+        "final_mcp_health",
+        "final_acquisition_probe",
+        "launcher_update",
+        "before_active_manifest",
+    ):
+        assert f'Invoke-PromotionCheckpoint "{checkpoint}"' in source
+    assert source.index('Invoke-PromotionCheckpoint "before_active_manifest"') < source.index(
+        "Write-AtomicJson $activePath"
+    )
+    assert source.index("Write-AtomicJson $activePath") < source.index(
+        'Remove-Item -LiteralPath (Join-Path $releasePath "install-pending.json")'
+    )
     assert "function Write-FailureReport" in source
     assert "function Restart-PriorRelease" in source
     assert "function Remove-Attempt" in source
@@ -109,13 +129,33 @@ def test_installer_uses_one_hash_helper_for_powershell_parse_safety() -> None:
     source = _source()
     assert "function Get-Sha256Hex" in source
     assert "$mutexDigest = (Get-Sha256Hex $root).Substring(0, 24)" in source
+    assert '"Local\\PowerFactoryMCP-$mutexDigest"' in source
+    assert '"Local\\\\PowerFactoryMCP-$mutexDigest"' not in source
     assert "token_identity = Get-Sha256Hex $Token" in source
 
 
 def test_interrupted_promotion_is_recoverable_and_registration_rollback_is_armed() -> None:
     source = _source()
     assert '"install-pending.json"' in source
+    assert 'release_path=$releasePath' in source
+    assert "function Test-AttemptOwnership" in source
+    assert "function Test-PendingReleaseOwnership" in source
+    assert "attempt.attempt_id -ne $marker.attempt_id" in source
+    assert "attempt.commit -ne $marker.commit" in source
     assert 'command_kind = "mcp_server"' in source
     assert "$script:CodexChanged = $true" in source
     assert "Register-Codex $script:Codex $endpoint $false" in source
     assert "Stop-CreatedProcess $script:StagedServer" in source
+
+
+def test_windows_ci_preserves_detailed_transaction_results() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "windows-installer.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'shell: powershell' in workflow
+    assert 'Parse every PowerShell release artifact' in workflow
+    assert 'Install-Module Pester -RequiredVersion 5.7.1' in workflow
+    assert 'Import-Module Pester -RequiredVersion 5.7.1' in workflow
+    assert '$config.Output.Verbosity = "Detailed"' in workflow
+    assert '$config.TestResult.OutputFormat = "NUnitXml"' in workflow
+    assert 'actions/upload-artifact@v4' in workflow
