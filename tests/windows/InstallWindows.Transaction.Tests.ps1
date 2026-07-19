@@ -48,6 +48,18 @@ Describe "PowerFactory MCP transactional installer" {
                 New-Item -ItemType Directory -Path $script:Attempt.state -Force | Out-Null
                 "0123456789012345678901234567890123456789" | Set-Content -LiteralPath (Join-Path $script:Attempt.state "mcp-token") -NoNewline
             }
+            if ($Failure -eq "PowerFactory installation configuration failed") {
+                $state = $script:Attempt.state
+                New-Item -ItemType File -Path (Join-Path $state "powerfactory-probe.json") -Force | Out-Null
+                [ordered]@{
+                    schema_version = "powerfactory-agent-mcp-install/v1"
+                    host = "127.0.0.1"
+                    port = 8787
+                    token_file = Join-Path $state "mcp-token"
+                    probe_config_file = Join-Path $state "powerfactory-probe.json"
+                    log_file = Join-Path $state "powerfactory-agent.log"
+                } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $state "powerfactory-agent.json") -NoNewline
+            }
         }
         Mock Get-StagedCommit { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
         Mock Set-AttemptPrivateAcl {}
@@ -138,6 +150,34 @@ Describe "PowerFactory MCP transactional installer" {
         Should -Invoke Remove-InstallerCodexRegistration -Times 0 -Exactly
         @(Get-ChildItem -LiteralPath $script:attempts -Directory).Count | Should -Be 0
         @(Get-ChildItem -LiteralPath $script:reports -Filter "*.json").Count | Should -Be 0
+    }
+
+    It "rebases all MCP installation paths before starting the moved release" {
+        $script:StartedServers = @()
+        Mock Start-McpServer {
+            param($AgentExecutable, $Source, $Config, $ListenPort, $Token, $OwnershipPath, $Scope)
+            $script:StartedServers += [PSCustomObject]@{ Config = $Config; Scope = $Scope }
+            [PSCustomObject]@{ Id = 41001; HasExited = $false }
+        }
+
+        Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot
+
+        $staged = $script:StartedServers | Where-Object { $_.Scope -eq "staged_attempt" } | Select-Object -First 1
+        $final = $script:StartedServers | Where-Object { $_.Scope -eq "pending_release" } | Select-Object -First 1
+        $staged | Should -Not -BeNullOrEmpty
+        $final | Should -Not -BeNullOrEmpty
+        $stagedState = Split-Path -Parent $staged.Config
+        $configurationText = Get-Content -LiteralPath $final.Config -Raw
+        $configuration = $configurationText | ConvertFrom-Json
+        foreach ($field in @("token_file", "log_file", "probe_config_file")) {
+            $configuration.$field | Should -Match ([regex]::Escape((Split-Path -Parent $final.Config)))
+            $configuration.$field | Should -Not -Match ([regex]::Escape($stagedState))
+        }
+        Test-Path -LiteralPath $configuration.token_file -PathType Leaf | Should -BeTrue
+        Test-Path -LiteralPath $configuration.probe_config_file -PathType Leaf | Should -BeTrue
+        (Split-Path -Parent $configuration.log_file) | Should -Be (Split-Path -Parent $final.Config)
+        $configurationText | Should -Not -Match ([regex]::Escape($stagedState))
+        Test-Path -LiteralPath $script:activePath | Should -BeTrue
     }
 
     It "recovers a valid stale attempt and a valid interrupted pending release" {

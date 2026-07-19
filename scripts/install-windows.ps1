@@ -269,7 +269,11 @@ function Write-AtomicJson {
     $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
     $backup = "$Path.$([guid]::NewGuid().ToString('N')).bak"
     try {
-        $Value | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding UTF8 -NoNewline
+        $json = $Value | ConvertTo-Json -Depth 8
+        # Windows PowerShell's UTF8 encoding writes a BOM, which Python's
+        # strict UTF-8 JSON reader rejects for powerfactory-agent.json.
+        $utf8NoBom = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+        [System.IO.File]::WriteAllText($temporary, $json, $utf8NoBom)
         if (Test-Path -LiteralPath $Path) {
             [System.IO.File]::Replace($temporary, $Path, $backup)
         } else {
@@ -279,6 +283,69 @@ function Write-AtomicJson {
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Test-PathWithinRoot {
+    param([string]$Path, [string]$Root)
+    $pathFull = [IO.Path]::GetFullPath($Path)
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    if ($pathFull.Equals($rootFull, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    $separator = [IO.Path]::DirectorySeparatorChar
+    return $pathFull.StartsWith("$rootFull$separator", [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-RebasedReleaseStatePath {
+    param(
+        [string]$Value,
+        [string]$AttemptStatePath,
+        [string]$ReleaseStatePath,
+        [string]$FieldName
+    )
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        Stop-Install "MCP installation configuration is missing $FieldName." "CONFIG_INVALID"
+    }
+    try { $sourcePath = [IO.Path]::GetFullPath($Value) }
+    catch { Stop-Install "MCP installation configuration has an invalid $FieldName path." "CONFIG_INVALID" }
+    if (-not (Test-PathWithinRoot $sourcePath $AttemptStatePath)) {
+        Stop-Install "MCP installation configuration $FieldName is outside the staged state directory." "CONFIG_INVALID"
+    }
+    $attemptStateFull = [IO.Path]::GetFullPath($AttemptStatePath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $relativePath = $sourcePath.Substring($attemptStateFull.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $rebasedPath = [IO.Path]::GetFullPath((Join-Path $ReleaseStatePath $relativePath))
+    if (-not (Test-PathWithinRoot $rebasedPath $ReleaseStatePath)) {
+        Stop-Install "MCP installation configuration $FieldName cannot be rebased into the release state directory." "CONFIG_INVALID"
+    }
+    return $rebasedPath
+}
+
+function Rebase-McpInstallationPaths {
+    param([string]$ConfigPath, [string]$AttemptStatePath, [string]$ReleaseStatePath)
+    $configuration = Read-JsonFile $ConfigPath
+    if (-not $configuration) {
+        Stop-Install "MCP installation configuration is missing after release promotion." "CONFIG_INVALID"
+    }
+    foreach ($field in @("token_file", "log_file", "probe_config_file")) {
+        if (-not $configuration.PSObject.Properties[$field] -or $null -eq $configuration.$field) {
+            Stop-Install "MCP installation configuration is missing $field." "CONFIG_INVALID"
+        }
+        $configuration.$field = Get-RebasedReleaseStatePath ([string]$configuration.$field) $AttemptStatePath $ReleaseStatePath $field
+    }
+    foreach ($field in @("token_file", "log_file", "probe_config_file")) {
+        if (-not (Test-PathWithinRoot ([string]$configuration.$field) $ReleaseStatePath) -or (Test-PathWithinRoot ([string]$configuration.$field) $AttemptStatePath)) {
+            Stop-Install "MCP installation configuration $field is not bound to the promoted state directory." "CONFIG_INVALID"
+        }
+    }
+    foreach ($field in @("token_file", "probe_config_file")) {
+        if (-not (Test-Path -LiteralPath $configuration.$field -PathType Leaf)) {
+            Stop-Install "Promoted MCP installation $field is missing." "CONFIG_INVALID"
+        }
+    }
+    $logParent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($configuration.log_file))
+    $releaseStateFull = [IO.Path]::GetFullPath($ReleaseStatePath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    if (-not $logParent.Equals($releaseStateFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Stop-Install "Promoted MCP installation log_file must be rooted in the release state directory." "CONFIG_INVALID"
+    }
+    Write-AtomicJson $ConfigPath $configuration
 }
 
 function Write-AtomicText {
@@ -831,9 +898,11 @@ try {
         $releaseName = "release-$($script:Attempt.commit.Substring(0, 12))-$($script:Attempt.id.Substring(8, 12))"
         $releasePath = Join-Path $releases $releaseName
         Write-AtomicJson (Join-Path $script:Attempt.path "install-pending.json") @{ schema_version="powerfactory-mcp-pending/v1"; attempt_id=$script:Attempt.id; commit=$script:Attempt.commit; release_path=$releasePath }
+        $attemptStatePath = $script:Attempt.state
         Move-Item -LiteralPath $script:Attempt.path -Destination $releasePath
         $script:Attempt.path = $releasePath; $script:Attempt.source = Join-Path $releasePath "source"; $script:Attempt.state = Join-Path $releasePath "state"
         $script:AgentExecutable = Join-Path $script:Attempt.source ".venv\\Scripts\\powerfactory-agent.exe"
+        Rebase-McpInstallationPaths (Join-Path $script:Attempt.state "powerfactory-agent.json") $attemptStatePath $script:Attempt.state
         Invoke-PromotionCheckpoint "directory_move"
         $script:FinalServer = Start-McpServer -AgentExecutable $script:AgentExecutable -Source $script:Attempt.source -Config (Join-Path $script:Attempt.state "powerfactory-agent.json") -ListenPort $Port -Token $script:Token -OwnershipPath (Join-Path $releasePath "ownership.json") -Scope "pending_release"
         Invoke-PromotionCheckpoint "final_mcp_health"

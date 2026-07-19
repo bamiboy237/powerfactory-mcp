@@ -110,6 +110,21 @@ def test_health_checks_are_authenticated_and_do_not_start_powerfactory_from_serv
     assert source.index('Invoke-Stage "cutover_prior_service_drain"') < source.index('Invoke-Stage "acquisition_probe"')
 
 
+def test_promotion_rebases_absolute_mcp_state_paths_before_final_health_check() -> None:
+    source = _source()
+    assert "function Rebase-McpInstallationPaths" in source
+    assert "function Get-RebasedReleaseStatePath" in source
+    assert "function Test-PathWithinRoot" in source
+    assert "new-object -typename system.text.utf8encoding -argumentlist $false" in source.lower()
+    move = source.index("Move-Item -LiteralPath $script:Attempt.path -Destination $releasePath")
+    rebase = source.index("Rebase-McpInstallationPaths (Join-Path $script:Attempt.state \"powerfactory-agent.json\")")
+    final_server = source.index("$script:FinalServer = Start-McpServer")
+    assert move < rebase < final_server
+    assert 'foreach ($field in @(\"token_file\", \"log_file\", \"probe_config_file\"))' in source
+    assert "Promoted MCP installation $field is missing." in source
+    assert "log_file must be rooted in the release state directory" in source
+
+
 def test_codex_registration_requires_all_owned_evidence_before_mutation() -> None:
     source = _source()
     assert "function Test-OwnedCodexRegistration" in source
