@@ -938,7 +938,16 @@ try {
         $attemptStatePath = $script:Attempt.state
         Move-Item -LiteralPath $script:Attempt.path -Destination $releasePath
         $script:Attempt.path = $releasePath; $script:Attempt.source = Join-Path $releasePath "source"; $script:Attempt.state = Join-Path $releasePath "state"
+        # Windows virtual-environment launchers embed their installation path.
+        # Recreate the disposable environment after promotion so the final
+        # service never executes launchers bound to the old attempt directory.
+        $promotedEnvironment = Join-Path $script:Attempt.source ".venv"
+        Remove-Item -LiteralPath $promotedEnvironment -Recurse -Force -ErrorAction Stop
+        Push-Location $script:Attempt.source
+        try { Invoke-CheckedCommand $script:Uv @("sync", "--locked", "--python", $script:Runtime.PythonVersion) "Promoted Python environment setup failed" }
+        finally { Pop-Location }
         $script:AgentExecutable = Join-Path $script:Attempt.source ".venv\\Scripts\\powerfactory-agent.exe"
+        if (-not (Test-Path -LiteralPath $script:AgentExecutable)) { Stop-Install "Promoted PowerFactory MCP executable was not created." "ENVIRONMENT_INVALID" }
         Rebase-McpInstallationPaths (Join-Path $script:Attempt.state "powerfactory-agent.json") $attemptStatePath $script:Attempt.state
         Invoke-PromotionCheckpoint "directory_move"
         $script:FinalServer = Start-McpServer -AgentExecutable $script:AgentExecutable -Source $script:Attempt.source -Config (Join-Path $script:Attempt.state "powerfactory-agent.json") -ListenPort $Port -Token $script:Token -OwnershipPath (Join-Path $releasePath "ownership.json") -Scope "pending_release"
