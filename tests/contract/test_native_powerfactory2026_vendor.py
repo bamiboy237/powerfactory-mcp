@@ -121,9 +121,6 @@ class NativeApplication:
             "scen": NativeFolder([]),
         }
 
-    def GetVersion(self):
-        return "2026 SP0"
-
     def GetActiveProject(self):
         return self.project
 

@@ -181,12 +181,10 @@ class NativePowerFactory2026Vendor:
             password = None
         if application is None:
             raise InvalidOperation("GetApplicationExt returned no application")
-        version_reader = getattr(application, "GetVersion", None)
-        if not callable(version_reader):
-            raise NativeMappingUnavailable("application.GetVersion mapping is unavailable")
-        version = version_reader()
-        if not isinstance(version, str) or not version.strip():
-            raise InvalidOperation("application.GetVersion returned invalid evidence")
+        # The admitted release is validated before acquisition and bound to the
+        # configured installation identity. PowerFactory 2026 SP1 does not
+        # expose Application.GetVersion through its Python application object.
+        version = request.requested_release
         self._module = module
         self._application = application
         self._session_id = self._id_factory()
