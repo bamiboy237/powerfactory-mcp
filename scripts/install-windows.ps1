@@ -55,18 +55,32 @@ function Get-CodexRegistrationFingerprint {
 
     # Query only the product registration. A content-blind list command is used
     # only as a CLI liveness check when the target is absent; its version-specific
-    # JSON collection shape is never parsed or persisted.
+    # JSON collection shape is never parsed or persisted. Windows PowerShell 5.1
+    # promotes native stderr to an ErrorRecord; Codex writes its normal not-found
+    # result to stderr, so native exit codes must be collected with Continue.
     try {
-        $output = & $Codex mcp get powerfactory-agent --json 2>$null
-        $exitCode = $LASTEXITCODE
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $output = & $Codex mcp get powerfactory-agent --json 2>$null
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
     } catch {
         return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
     }
 
     if ($exitCode -ne 0) {
         try {
-            & $Codex mcp list --json *> $null
-            $listExitCode = $LASTEXITCODE
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = "Continue"
+                & $Codex mcp list --json *> $null
+                $listExitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $previousErrorActionPreference
+            }
         } catch {
             return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
         }
