@@ -353,11 +353,12 @@ Describe "PowerFactory MCP Codex registration query" {
         . $script:InstallerPath -TestHarness
 
         function New-FakeCodexCommand {
-            param([string[]]$OutputLines)
+            param([string[]]$OutputLines, [int]$ListExitCode = 0)
             $path = Join-Path $TestDrive "codex-$([guid]::NewGuid().ToString('N')).cmd"
             @(
                 "@echo off",
                 'if not "%~1"=="mcp" exit /b 91',
+                "if `"%~2`"==`"list`" exit /b $ListExitCode",
                 'if not "%~2"=="get" exit /b 92',
                 'if not "%~3"=="powerfactory-agent" exit /b 93',
                 'if not "%~4"=="--json" exit /b 94'
@@ -380,10 +381,8 @@ Describe "PowerFactory MCP Codex registration query" {
         $result.fingerprint.token_env_var | Should -Be "POWERFACTORY_AGENT_MCP_TOKEN"
     }
 
-    It "returns absent only for the targeted Codex not-found result" {
+    It "returns absent only when the target is missing and the Codex CLI remains healthy" {
         $codex = New-FakeCodexCommand @(
-            "echo WARNING: unrelated Codex diagnostic. 1>&2",
-            "echo Error: No MCP server named 'powerfactory-agent' found. 1>&2",
             "exit /b 1"
         )
 
@@ -396,7 +395,7 @@ Describe "PowerFactory MCP Codex registration query" {
         $codex = New-FakeCodexCommand @(
             "echo Error: Codex configuration is unavailable. 1>&2",
             "exit /b 1"
-        )
+        ) -ListExitCode 1
 
         $result = Get-CodexRegistrationFingerprint $codex
 

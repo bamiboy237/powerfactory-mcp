@@ -52,30 +52,24 @@ function ConvertTo-CodexRegistrationFingerprint {
 function Get-CodexRegistrationFingerprint {
     param([string]$Codex)
 
-    # Query only the product registration. This avoids depending on the JSON
-    # collection shape used by different Codex CLI releases and never captures
-    # unrelated registrations. Stderr is used only to distinguish the command's
-    # explicit not-found result and is always deleted without being reported.
-    $diagnosticPath = Join-Path ([IO.Path]::GetTempPath()) "powerfactory-mcp-codex-$([guid]::NewGuid().ToString('N')).stderr"
+    # Query only the product registration. A content-blind list command is used
+    # only as a CLI liveness check when the target is absent; its version-specific
+    # JSON collection shape is never parsed or persisted.
     try {
-        try {
-            $output = & $Codex mcp get powerfactory-agent --json 2>$diagnosticPath
-            $exitCode = $LASTEXITCODE
-        } catch {
-            return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
-        }
-        try {
-            $diagnostic = if (Test-Path -LiteralPath $diagnosticPath) { Get-Content -LiteralPath $diagnosticPath -Raw } else { "" }
-        } catch {
-            return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
-        }
-    } finally {
-        Remove-Item -LiteralPath $diagnosticPath -Force -ErrorAction SilentlyContinue
+        $output = & $Codex mcp get powerfactory-agent --json 2>$null
+        $exitCode = $LASTEXITCODE
+    } catch {
+        return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
     }
 
     if ($exitCode -ne 0) {
-        $absentPattern = "No MCP server named ['`"]powerfactory-agent['`"] found\."
-        if ($exitCode -eq 1 -and $diagnostic -match $absentPattern) {
+        try {
+            & $Codex mcp list --json *> $null
+            $listExitCode = $LASTEXITCODE
+        } catch {
+            return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
+        }
+        if ($exitCode -eq 1 -and $listExitCode -eq 0) {
             return [PSCustomObject]@{ state = "absent"; fingerprint = $null }
         }
         return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
