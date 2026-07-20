@@ -74,7 +74,7 @@ function Get-CodexRegistrationFingerprint {
     }
 
     if ($exitCode -ne 0) {
-        $absentPattern = "(?m)^Error:\s+No MCP server named ['`"]powerfactory-agent['`"] found\.\s*$"
+        $absentPattern = "No MCP server named ['`"]powerfactory-agent['`"] found\."
         if ($exitCode -eq 1 -and $diagnostic -match $absentPattern) {
             return [PSCustomObject]@{ state = "absent"; fingerprint = $null }
         }
