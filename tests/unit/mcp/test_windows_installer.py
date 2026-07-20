@@ -135,7 +135,10 @@ def test_codex_registration_requires_all_owned_evidence_before_mutation() -> Non
     assert "--bearer-token-env-var" in source
     assert "SetEnvironmentVariable" not in source
     assert "Get-CodexRegistrationFingerprint" in source
-    assert "mcp list --json" in source
+    assert "mcp get powerfactory-agent --json" in source
+    assert "mcp list --json" not in source
+    assert "No MCP server named" in source
+    assert 'state = "query_failed"' in source
     assert "unknown_schema" in source
     assert "streamable_http" in source
 

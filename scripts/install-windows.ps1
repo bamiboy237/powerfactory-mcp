@@ -52,19 +52,38 @@ function ConvertTo-CodexRegistrationFingerprint {
 function Get-CodexRegistrationFingerprint {
     param([string]$Codex)
 
-    # Listing lets us distinguish an absent target from a failed lookup. The
-    # captured JSON is never printed or persisted because other registrations
-    # may contain sensitive headers.
-    $output = & $Codex mcp list --json 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $output) {
+    # Query only the product registration. This avoids depending on the JSON
+    # collection shape used by different Codex CLI releases and never captures
+    # unrelated registrations. Stderr is used only to distinguish the command's
+    # explicit not-found result and is always deleted without being reported.
+    $diagnosticPath = Join-Path ([IO.Path]::GetTempPath()) "powerfactory-mcp-codex-$([guid]::NewGuid().ToString('N')).stderr"
+    try {
+        try {
+            $output = & $Codex mcp get powerfactory-agent --json 2>$diagnosticPath
+            $exitCode = $LASTEXITCODE
+        } catch {
+            return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
+        }
+        try {
+            $diagnostic = if (Test-Path -LiteralPath $diagnosticPath) { Get-Content -LiteralPath $diagnosticPath -Raw } else { "" }
+        } catch {
+            return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
+        }
+    } finally {
+        Remove-Item -LiteralPath $diagnosticPath -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($exitCode -ne 0) {
+        $absentPattern = "(?m)^Error:\s+No MCP server named ['`"]powerfactory-agent['`"] found\.\s*$"
+        if ($exitCode -eq 1 -and $diagnostic -match $absentPattern) {
+            return [PSCustomObject]@{ state = "absent"; fingerprint = $null }
+        }
         return [PSCustomObject]@{ state = "query_failed"; fingerprint = $null }
     }
-    try { $registrations = @(ConvertFrom-Json -InputObject ($output -join [Environment]::NewLine)) }
+    if (-not $output) { return [PSCustomObject]@{ state = "unparseable"; fingerprint = $null } }
+    try { $registration = ConvertFrom-Json -InputObject ($output -join [Environment]::NewLine) }
     catch { return [PSCustomObject]@{ state = "unparseable"; fingerprint = $null } }
-    $matches = @($registrations | Where-Object { $_.name -eq "powerfactory-agent" })
-    if ($matches.Count -eq 0) { return [PSCustomObject]@{ state = "absent"; fingerprint = $null } }
-    if ($matches.Count -ne 1) { return [PSCustomObject]@{ state = "ambiguous"; fingerprint = $null } }
-    $fingerprint = ConvertTo-CodexRegistrationFingerprint $matches[0]
+    $fingerprint = ConvertTo-CodexRegistrationFingerprint $registration
     if ($null -eq $fingerprint) { return [PSCustomObject]@{ state = "unknown_schema"; fingerprint = $null } }
     return [PSCustomObject]@{ state = "present"; fingerprint = $fingerprint }
 }

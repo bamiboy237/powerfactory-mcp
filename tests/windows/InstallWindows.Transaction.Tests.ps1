@@ -346,3 +346,82 @@ Describe "PowerFactory MCP transactional installer" {
         ConvertTo-CodexRegistrationFingerprint $matching | Should -BeNullOrEmpty
     }
 }
+
+Describe "PowerFactory MCP Codex registration query" {
+    BeforeAll {
+        $script:InstallerPath = Join-Path $PSScriptRoot "..\..\scripts\install-windows.ps1"
+        . $script:InstallerPath -TestHarness
+
+        function New-FakeCodexCommand {
+            param([string[]]$OutputLines)
+            $path = Join-Path $TestDrive "codex-$([guid]::NewGuid().ToString('N')).cmd"
+            @(
+                "@echo off",
+                'if not "%~1"=="mcp" exit /b 91',
+                'if not "%~2"=="get" exit /b 92',
+                'if not "%~3"=="powerfactory-agent" exit /b 93',
+                'if not "%~4"=="--json" exit /b 94'
+            ) + $OutputLines | Set-Content -LiteralPath $path -Encoding Ascii
+            return $path
+        }
+    }
+
+    It "returns the exact fingerprint from a targeted Codex query" {
+        $codex = New-FakeCodexCommand @(
+            'echo {"name":"powerfactory-agent","transport":{"type":"streamable_http","url":"http://127.0.0.1:8787/mcp","bearer_token_env_var":"POWERFACTORY_AGENT_MCP_TOKEN"}}',
+            "exit /b 0"
+        )
+
+        $result = Get-CodexRegistrationFingerprint $codex
+
+        $result.state | Should -Be "present"
+        $result.fingerprint.name | Should -Be "powerfactory-agent"
+        $result.fingerprint.endpoint | Should -Be "http://127.0.0.1:8787/mcp"
+        $result.fingerprint.token_env_var | Should -Be "POWERFACTORY_AGENT_MCP_TOKEN"
+    }
+
+    It "returns absent only for the targeted Codex not-found result" {
+        $codex = New-FakeCodexCommand @(
+            "echo WARNING: unrelated Codex diagnostic. 1>&2",
+            "echo Error: No MCP server named 'powerfactory-agent' found. 1>&2",
+            "exit /b 1"
+        )
+
+        $result = Get-CodexRegistrationFingerprint $codex
+
+        $result.state | Should -Be "absent"
+    }
+
+    It "fails closed when the targeted Codex query fails for another reason" {
+        $codex = New-FakeCodexCommand @(
+            "echo Error: Codex configuration is unavailable. 1>&2",
+            "exit /b 1"
+        )
+
+        $result = Get-CodexRegistrationFingerprint $codex
+
+        $result.state | Should -Be "query_failed"
+    }
+
+    It "fails closed when Codex returns malformed JSON" {
+        $codex = New-FakeCodexCommand @(
+            "echo not-json",
+            "exit /b 0"
+        )
+
+        $result = Get-CodexRegistrationFingerprint $codex
+
+        $result.state | Should -Be "unparseable"
+    }
+
+    It "fails closed when Codex returns an unsupported registration schema" {
+        $codex = New-FakeCodexCommand @(
+            'echo {"transport":{"url":"http://127.0.0.1:8787/mcp"}}',
+            "exit /b 0"
+        )
+
+        $result = Get-CodexRegistrationFingerprint $codex
+
+        $result.state | Should -Be "unknown_schema"
+    }
+}
