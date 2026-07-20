@@ -299,6 +299,75 @@ Describe "PowerFactory MCP transactional installer" {
         Should -Invoke Remove-InstallerCodexRegistration -Times 0 -Exactly
     }
 
+    It "preserves an exact legacy Codex registration without mutating it" {
+        Mock Get-CodexRegistrationFingerprint {
+            [PSCustomObject]@{
+                state = "present"
+                fingerprint = [PSCustomObject]@{
+                    name = "powerfactory-agent"
+                    endpoint = "http://127.0.0.1:8787/mcp"
+                    token_env_var = "POWERFACTORY_AGENT_MCP_TOKEN"
+                }
+            }
+        }
+
+        Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot
+
+        Test-Path -LiteralPath $script:activePath | Should -BeTrue
+        Should -Invoke Register-Codex -Times 0 -Exactly
+        Should -Invoke Remove-InstallerCodexRegistration -Times 0 -Exactly
+    }
+
+    It "preserves an exact legacy Codex registration when a later stage rolls back" {
+        Mock Get-CodexRegistrationFingerprint {
+            [PSCustomObject]@{
+                state = "present"
+                fingerprint = [PSCustomObject]@{
+                    name = "powerfactory-agent"
+                    endpoint = "http://127.0.0.1:8787/mcp"
+                    token_env_var = "POWERFACTORY_AGENT_MCP_TOKEN"
+                }
+            }
+        }
+        $env:POWERFACTORY_MCP_FAIL_STAGE = "codex_registration"
+
+        { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } | Should -Throw
+
+        Test-Path -LiteralPath $script:activePath | Should -BeFalse
+        Should -Invoke Register-Codex -Times 0 -Exactly
+        Should -Invoke Remove-InstallerCodexRegistration -Times 0 -Exactly
+    }
+
+    It "refuses a complete but foreign Codex registration before creating an attempt" {
+        Mock Get-CodexRegistrationFingerprint {
+            [PSCustomObject]@{
+                state = "present"
+                fingerprint = [PSCustomObject]@{
+                    name = "powerfactory-agent"
+                    endpoint = "http://127.0.0.1:8788/mcp"
+                    token_env_var = "POWERFACTORY_AGENT_MCP_TOKEN"
+                }
+            }
+        }
+        $caught = $null
+        try { Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot } catch { $caught = $_ }
+
+        $caught.Exception.Data["category"] | Should -Be "CODEX_OWNERSHIP_UNPROVEN"
+        @(Get-ChildItem -LiteralPath $script:attempts -Directory).Count | Should -Be 0
+        Should -Invoke Register-Codex -Times 0 -Exactly
+        Should -Invoke Remove-InstallerCodexRegistration -Times 0 -Exactly
+    }
+
+    It "creates a Codex registration when no registration exists" {
+        Mock Get-CodexRegistrationFingerprint { [PSCustomObject]@{ state = "absent"; fingerprint = $null } }
+
+        Invoke-InstallerTransaction -TransactionRoot $script:CaseRoot
+
+        Test-Path -LiteralPath $script:activePath | Should -BeTrue
+        Should -Invoke Register-Codex -Times 1 -Exactly
+        Should -Invoke Remove-InstallerCodexRegistration -Times 0 -Exactly
+    }
+
     It "preserves a stale attempt when process ownership cannot be proven" {
         $staleId = "attempt-33333333333333333333333333333333"
         $stalePath = Join-Path $script:attempts $staleId

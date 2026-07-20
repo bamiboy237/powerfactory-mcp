@@ -25,6 +25,7 @@ $script:FinalServer = $null
 $script:PriorCodexOwned = $false
 $script:Mutex = $null
 $script:PriorRegistration = $null
+$script:CompatibleLegacyCodexRegistration = $false
 $script:Token = $null
 $script:AgentExecutable = $null
 $script:LauncherChanged = $false
@@ -743,6 +744,7 @@ function Invoke-InstallerTransaction {
     $script:Prior = $null
     $script:PriorCodexOwned = $false
     $script:PriorRegistration = $null
+    $script:CompatibleLegacyCodexRegistration = $false
     $script:PriorWasStopped = $false
     $script:CodexChanged = $false
     $script:StagedServer = $null
@@ -828,7 +830,15 @@ try {
             $script:PriorCodexOwned = Test-OwnedCodexRegistration $script:PriorRegistration $script:Prior "http://127.0.0.1:$($script:Prior.port)/mcp" $priorToken
         } else {
             $script:PriorRegistration = Get-CodexRegistrationFingerprint $script:Codex
-            if ($script:PriorRegistration.state -ne "absent") { Stop-Install "Existing Codex registration is not provably owned. Resolve it manually with: codex mcp remove powerfactory-agent" "CODEX_OWNERSHIP_UNPROVEN" }
+            if ($script:PriorRegistration.state -eq "present" -and $script:PriorRegistration.fingerprint.endpoint -eq "http://127.0.0.1:$Port/mcp") {
+                # Earlier product installers registered the same fixed local MCP
+                # identity but did not create active.json or an ownership ledger.
+                # Preserve that exact registration; do not infer or modify any
+                # legacy files or processes from its presence.
+                $script:CompatibleLegacyCodexRegistration = $true
+            } elseif ($script:PriorRegistration.state -ne "absent") {
+                Stop-Install "Existing Codex registration is not compatible with this PowerFactory MCP endpoint. Resolve it manually with: codex mcp remove powerfactory-agent" "CODEX_OWNERSHIP_UNPROVEN"
+            }
         }
     }
 
@@ -882,7 +892,7 @@ try {
             if (-not $script:PriorCodexOwned) {
                 Stop-Install "Existing Codex registration is not provably owned. Resolve it manually with: codex mcp remove powerfactory-agent" "CODEX_OWNERSHIP_UNPROVEN"
             }
-        } else {
+        } elseif (-not $script:CompatibleLegacyCodexRegistration) {
             Register-Codex $script:Codex $endpoint $false
         }
     }

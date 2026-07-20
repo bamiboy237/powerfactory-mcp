@@ -144,6 +144,15 @@ def test_codex_registration_requires_all_owned_evidence_before_mutation() -> Non
     assert "streamable_http" in source
 
 
+def test_installer_preserves_an_exact_legacy_codex_registration_without_an_active_manifest() -> None:
+    source = _source()
+    assert '$script:CompatibleLegacyCodexRegistration = $false' in source
+    assert 'if ($script:PriorRegistration.state -eq "present" -and $script:PriorRegistration.fingerprint.endpoint -eq "http://127.0.0.1:$Port/mcp")' in source
+    assert "Earlier product installers registered the same fixed local MCP" in source
+    assert 'elseif (-not $script:CompatibleLegacyCodexRegistration) {' in source
+    assert "Existing Codex registration is not compatible with this PowerFactory MCP endpoint." in source
+
+
 def test_installer_uses_one_hash_helper_for_powershell_parse_safety() -> None:
     source = _source()
     assert "function Get-Sha256Hex" in source
