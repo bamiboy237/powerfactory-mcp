@@ -801,6 +801,13 @@ def _object_full_name(value: Any) -> str | None:
     return result if isinstance(result, str) else None
 
 
+def _object_key(value: Any) -> str:
+    key = _required_call(value, "GetFullName")
+    if not isinstance(key, str) or not key:
+        raise PowerFactory2026ProbeError("native object has no exact canonical locator")
+    return key
+
+
 def _object_class_name(value: Any) -> str | None:
     method = getattr(value, "GetClassName", None)
     if not callable(method):
