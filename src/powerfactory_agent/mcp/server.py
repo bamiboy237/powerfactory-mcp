@@ -279,6 +279,20 @@ def create_server(
         lifespan=lifespan,
     )
 
+    _register_context_and_status_tools(server, controller, logger)
+    _register_inventory_tools(server, controller)
+    _register_calculation_tools(server, controller)
+    _register_graph_tools(server, controller)
+    return server
+
+
+def _register_context_and_status_tools(
+    server: FastMCP,
+    controller: SessionController,
+    logger: logging.Logger,
+) -> None:
+    """Register status, context admission, and declined legacy lifecycle tools."""
+
     @server.tool()
     def get_session_status() -> dict[str, object]:
         """Return local service configuration status; never starts PowerFactory."""
@@ -295,6 +309,33 @@ def create_server(
         """Discover bounded choices or explicitly admit one exact PowerFactory project context."""
 
         return controller.open_project_context(project_selector, study_case, confirmed)
+
+    @server.tool()
+    def inspect_active_project() -> dict[str, object]:
+        """Decline the legacy disposable inspection path while a live session owns PowerFactory."""
+
+        return _tool_error(
+            "ENGINE_OPERATION_UNAVAILABLE",
+            "inspect_active_project uses a disposable PowerFactory process and is disabled while "
+            "the persistent MCP runtime owns the engine. Use get_model_context after "
+            "open_project_context instead.",
+        )
+
+    @server.tool()
+    def run_powerfactory_connectivity_probe(repeat: int = 2) -> dict[str, object]:
+        """Decline the legacy disposable lifecycle path while a live session owns PowerFactory."""
+
+        del repeat
+        return _tool_error(
+            "ENGINE_OPERATION_UNAVAILABLE",
+            "run_powerfactory_connectivity_probe uses a disposable PowerFactory process and is "
+            "disabled while the persistent MCP runtime owns the engine. Installer acquisition "
+            "validation remains disposable before MCP startup.",
+        )
+
+
+def _register_inventory_tools(server: FastMCP, controller: SessionController) -> None:
+    """Register read-only model and asset inventory tools."""
 
     @server.tool()
     def get_model_context() -> dict[str, object]:
@@ -331,6 +372,10 @@ def create_server(
             lambda: controller.require_runtime().get_asset_context(product_identity=product_identity),
         )
 
+
+def _register_calculation_tools(server: FastMCP, controller: SessionController) -> None:
+    """Register load-flow calculation and result comparison tools."""
+
     @server.tool()
     def run_validated_load_flow(idempotency_key: str) -> dict[str, object]:
         """Run and persist a bounded load flow for the verified active model context."""
@@ -363,6 +408,10 @@ def create_server(
                 candidate_snapshot_id=candidate_snapshot_id,
             ),
         )
+
+
+def _register_graph_tools(server: FastMCP, controller: SessionController) -> None:
+    """Register persisted model-graph refresh, summary, and query tools."""
 
     @server.tool()
     def refresh_model_graph() -> dict[str, object]:
@@ -406,31 +455,6 @@ def create_server(
                 hops=hops,
             ),
         )
-
-    @server.tool()
-    def inspect_active_project() -> dict[str, object]:
-        """Decline the legacy disposable inspection path while a live session owns PowerFactory."""
-
-        return _tool_error(
-            "ENGINE_OPERATION_UNAVAILABLE",
-            "inspect_active_project uses a disposable PowerFactory process and is disabled while "
-            "the persistent MCP runtime owns the engine. Use get_model_context after "
-            "open_project_context instead.",
-        )
-
-    @server.tool()
-    def run_powerfactory_connectivity_probe(repeat: int = 2) -> dict[str, object]:
-        """Decline the legacy disposable lifecycle path while a live session owns PowerFactory."""
-
-        del repeat
-        return _tool_error(
-            "ENGINE_OPERATION_UNAVAILABLE",
-            "run_powerfactory_connectivity_probe uses a disposable PowerFactory process and is "
-            "disabled while the persistent MCP runtime owns the engine. Installer acquisition "
-            "validation remains disposable before MCP startup.",
-        )
-
-    return server
 
 
 def build_asgi_app(
