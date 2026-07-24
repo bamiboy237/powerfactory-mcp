@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from collections.abc import Callable
 import json
 import os
 import platform
@@ -163,6 +164,7 @@ class PowerFactoryEngineeringRuntime:
         self._calculation_store: CalculationStore | None = None
         self._calculations: LoadFlowService | None = None
         self._session: SessionObservation | None = None
+        self._extractor: _SupportedClassSnapshotExtractor | None = None
 
     def _start(self) -> None:
         """Explicit, idempotent runtime startup with side effects.
@@ -214,6 +216,14 @@ class PowerFactoryEngineeringRuntime:
                 self._calculation_store,
                 owner_wait_timeout_seconds=120.0,
             )
+            self._extractor = _SupportedClassSnapshotExtractor(
+                owner,
+                self._identity_store,
+                self._graph_store,
+                self._installation_id,
+                self._profile_id,
+                self._await,
+            )
             try:
                 self._session = self._await(
                     owner.submit_start(
@@ -238,6 +248,7 @@ class PowerFactoryEngineeringRuntime:
                 self._graph = None
                 self._calculation_store = None
                 self._calculations = None
+                self._extractor = None
                 raise
             self._started = True
 
@@ -356,7 +367,7 @@ class PowerFactoryEngineeringRuntime:
         return self._response("persisted-calculation-comparison", comparison=to_primitive(comparison))
 
     def refresh_model_graph(self) -> dict[str, object]:
-        snapshot = self._extract_snapshot()
+        snapshot = self._extractor.extract_snapshot(self._require_context(), self._session)
         self._graph.full_refresh(snapshot)
         return self._graph_summary(snapshot)
 
@@ -425,217 +436,8 @@ class PowerFactoryEngineeringRuntime:
         try:
             return self._graph_store.latest(expected_configuration_key=context.configuration_key.value)
         except GraphSnapshotNotFoundError:
-            snapshot = self._extract_snapshot()
+            snapshot = self._extractor.extract_snapshot(context, self._session)
             return self._graph.full_refresh(snapshot)
-
-    def _extract_snapshot(self) -> GraphSnapshot:
-        active_context = self._require_context()
-        records = self._query_all_objects()
-        try:
-            prior = self._graph_store.latest(expected_configuration_key=active_context.configuration_key.value)
-            context_id = prior.context.model_context_id
-            counter = prior.context.extraction_revision.counter + 1
-        except GraphSnapshotNotFoundError:
-            context_id, counter = str(uuid4()), 1
-        evidence_reference = f"gateway-session:{self._session.session_id}:extraction:{counter}"
-        assets_by_selector: dict[PrimitiveObjectSelector, AssetReference] = {}
-        attributes: list[GraphAttribute] = []
-        for record in records:
-            locator = self._locator(record.selector, record.selector.object_class.kind.value)
-            try:
-                binding = self._identity_store.resolve_exact(locator)
-            except IdentityNotFoundError:
-                binding = self._identity_store.create(locator, evidence_reference=evidence_reference)
-            asset = AssetReference(
-                binding.product_identity,
-                binding.current_locator,
-                record.display_name,
-                _KIND_MAP[record.selector.object_class.kind],
-                record.selector.project_key,
-                IdentityLifecycleState.ACTIVE,
-            )
-            assets_by_selector[record.selector] = asset
-            for field in record.fields:
-                attributes.append(
-                    GraphAttribute(
-                        asset.product_identity,
-                        field.selector.kind.value,
-                        str(to_primitive(field.value)),
-                        GraphDataOrigin.EXTRACTED,
-                    )
-                )
-        relationships = self._extract_relationships(assets_by_selector)
-        ordered_assets = tuple(sorted(assets_by_selector.values(), key=lambda item: item.product_identity.value))
-        fingerprint_value = canonical_digest(
-            {"configuration_key": active_context.configuration_key, "assets": ordered_assets},
-            kind="live-state-fingerprint",
-        )
-        fingerprint = LiveStateFingerprint(fingerprint_value)
-        now = datetime.now(timezone.utc)
-        dependency = DependencyFingerprint(
-            _DEPENDENCIES,
-            fingerprint,
-            CompletenessState.CONSERVATIVE,
-            now,
-            self._session.session_id,
-            evidence_reference,
-            VersionedName("supported-class-inventory", "1"),
-        )
-        freshness = FreshnessEvidence(
-            FreshnessLevel.VERIFIED,
-            now,
-            self._session.session_id,
-            active_context.configuration_key,
-            _DEPENDENCIES,
-            evidence_reference,
-            "supported-class-inventory",
-            "1",
-            False,
-        )
-        context = ModelContext(
-            context_id,
-            active_context.configuration_key,
-            self._session.powerfactory_version,
-            ordered_assets,
-            ExtractionRevision(context_id, counter),
-            now,
-            freshness,
-            (dependency,),
-        )
-        graph_assets = tuple(
-            sorted(
-                (
-                    GraphAsset(
-                        asset,
-                        None,
-                        None,
-                        True,
-                        False,
-                        None,
-                        2 if asset.asset_kind is AssetKind.TRANSFORMER else 0,
-                    )
-                    for asset in ordered_assets
-                ),
-                key=lambda item: item.asset.product_identity.value,
-            )
-        )
-        provenance = (
-            ExtractionProvenance(
-                "PowerFactory 2026 native gateway",
-                "Supported class subgraph only; switch, three-winding-transformer, and explicit out-of-service state mappings are not admitted.",
-                GraphDataOrigin.EXTRACTED,
-            ),
-        )
-        content = {
-            "context": context,
-            "assets": graph_assets,
-            "attributes": tuple(attributes),
-            "relationships": relationships,
-        }
-        return GraphSnapshot(
-            str(uuid4()),
-            context,
-            ContentDigest(canonical_digest(content)),
-            graph_assets,
-            tuple(sorted(attributes, key=lambda item: (item.asset_identity.value, item.name))),
-            relationships,
-            provenance,
-        )
-
-    def _query_all_objects(self) -> tuple[ObjectObservation, ...]:
-        context = self._require_context()
-        records: list[ObjectObservation] = []
-        for object_class in _SUPPORTED_CLASSES:
-            cursor = None
-            while True:
-                request = ObjectQueryRequest(
-                    context.configuration_key,
-                    ObjectQueryScope.ACTIVE_GRIDS,
-                    OutOfServicePolicy.EXCLUDE,
-                    (ObjectClassSelector(object_class, _CONTRACT),),
-                    _ATTRIBUTES_BY_CLASS[object_class],
-                    100,
-                    cursor,
-                )
-                batch = self._await(
-                    self._owner.submit_query_objects(request, idempotency_key=f"inventory:{uuid4()}"),
-                    ObjectQueryBatch,
-                )
-                records.extend(batch.records)
-                if batch.complete:
-                    break
-                cursor = batch.next_cursor
-        return tuple(records)
-
-    def _extract_relationships(
-        self,
-        assets: dict[PrimitiveObjectSelector, AssetReference],
-    ) -> tuple[GraphRelationship, ...]:
-        context = self._require_context()
-        equipment = [
-            selector for selector in assets
-            if selector.object_class.kind in {ObjectClassKind.LINE, ObjectClassKind.LOAD, ObjectClassKind.TRANSFORMER}
-        ]
-        relationships: list[GraphRelationship] = []
-        for offset in range(0, len(equipment), 100):
-            selected = tuple(equipment[offset:offset + 100])
-            observation = self._await(
-                self._owner.submit_observe_dependencies(
-                    DependencyReadRequest(
-                        context.configuration_key,
-                        selected,
-                        (),
-                        (_CONNECTED_TERMINAL,),
-                        100,
-                    ),
-                    idempotency_key=f"topology:{uuid4()}",
-                ),
-                DependencyObservation,
-            )
-            if not observation.complete:
-                raise RuntimeError("PowerFactory topology dependency read was incomplete")
-            for item in observation.objects:
-                source = assets[item.selector]
-                for edge in item.relationships:
-                    target = assets.get(edge.target)
-                    if target is None:
-                        raise RuntimeError("topology references a terminal outside the admitted inventory")
-                    edge_id = canonical_digest(
-                        {"source": source.product_identity, "target": target.product_identity},
-                        kind="relationship-id",
-                    )
-                    relationships.append(
-                        GraphRelationship(
-                            edge_id,
-                            source.product_identity,
-                            target.product_identity,
-                            GraphRelationshipKind.CONNECTS,
-                            GraphDataOrigin.EXTRACTED,
-                            True,
-                        )
-                    )
-        return tuple(sorted(relationships, key=lambda item: item.relationship_id))
-
-    def _locator(self, selector: PrimitiveObjectSelector, object_class: str) -> PowerFactoryLocator:
-        return PowerFactoryLocator(
-            str(uuid4()),
-            LocatorKind.NATIVE_CANDIDATE if selector.native_value is not None else LocatorKind.CANONICAL_PATH_FALLBACK,
-            ProjectProvenance(
-                self._installation_id,
-                self._profile_id,
-                selector.project_key,
-                f"gateway-session:{self._session.session_id}",
-            ),
-            object_class,
-            selector.native_field,
-            selector.native_value,
-            selector.canonical_path,
-            LocatorEvidenceSchema("powerfactory-object-selector", "1", self._session.adapter_version),
-            datetime.now(timezone.utc),
-            self._session.session_id,
-            LocatorTrust.CANDIDATE if selector.native_value is not None else LocatorTrust.FALLBACK,
-            False,
-        )
 
     @staticmethod
     def _metric(asset: AssetReference, metric_kind: MetricKind, unit: str) -> MetricDefinition:
@@ -724,24 +526,7 @@ class PowerFactoryEngineeringRuntime:
         )
 
     def _persist_runtime_diagnostic(self, operation: dict[str, str]) -> dict[str, object]:
-        evidence_id = (
-            f"runtime-failure-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
-            f"{operation['operation_id']}.json"
-        )
-        diagnostic: dict[str, object] = {
-            "schema_version": "powerfactory-runtime-diagnostic/v1",
-            "evidence_id": evidence_id,
-            "operation": operation,
-            "owner": self._owner.diagnostics(),
-            "mcp_process": {"pid": os.getpid(), "alive": True},
-        }
-        directory = self._installation.log_file.parent / "evidence"
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        (directory / evidence_id).write_text(
-            json.dumps(diagnostic, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
-            encoding="utf-8",
-        )
-        return diagnostic
+        return _write_runtime_diagnostic(self._installation, operation, self._owner.diagnostics())
 
     @staticmethod
     def _safe_classification(value: object) -> str:
@@ -768,3 +553,285 @@ class PowerFactoryEngineeringRuntime:
 
 
 __all__ = ["PowerFactoryEngineeringRuntime", "RuntimeOperationFailure"]
+
+
+def _write_runtime_diagnostic(
+    installation: McpInstallation,
+    operation: dict[str, str],
+    owner_diagnostics: dict[str, object],
+) -> dict[str, object]:
+    """Persist a sanitized runtime diagnostic evidence file and return it.
+
+    Extracted from the runtime facade so diagnostic persistence is cohesive and
+    testable without composing a full runtime. The structure, ordering,
+    evidence_id format, and write semantics are preserved verbatim.
+    """
+
+    evidence_id = (
+        f"runtime-failure-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
+        f"{operation['operation_id']}.json"
+    )
+    diagnostic: dict[str, object] = {
+        "schema_version": "powerfactory-runtime-diagnostic/v1",
+        "evidence_id": evidence_id,
+        "operation": operation,
+        "owner": owner_diagnostics,
+        "mcp_process": {"pid": os.getpid(), "alive": True},
+    }
+    directory = installation.log_file.parent / "evidence"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    (directory / evidence_id).write_text(
+        json.dumps(diagnostic, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+    return diagnostic
+
+
+class _SupportedClassSnapshotExtractor:
+    """Supported-class subgraph extraction collaborator for the engineering runtime.
+
+    Builds a bounded ``GraphSnapshot`` of admitted classes, attributes, and
+    connected-terminal relationships through the serialized owner. The body is
+    preserved verbatim from the prior facade methods; only the owner, stores,
+    installation identity, session, and an await callable are injected so the
+    facade stays a composition boundary and never exposes vendor handles.
+    """
+
+    def __init__(
+        self,
+        owner: SerializedPowerFactoryOwner,
+        identity_store: IdentityStore,
+        graph_store: ModelGraphStore,
+        installation_id: str,
+        profile_id: str,
+        await_operation: Callable[[object, type[object]], object],
+    ) -> None:
+        self._owner = owner
+        self._identity_store = identity_store
+        self._graph_store = graph_store
+        self._installation_id = installation_id
+        self._profile_id = profile_id
+        self._await_operation = await_operation
+
+    def extract_snapshot(
+        self,
+        context: ContextObservation,
+        session: SessionObservation,
+    ) -> GraphSnapshot:
+        active_context = context
+        records = self._query_all_objects(context)
+        try:
+            prior = self._graph_store.latest(
+                expected_configuration_key=active_context.configuration_key.value
+            )
+            context_id = prior.context.model_context_id
+            counter = prior.context.extraction_revision.counter + 1
+        except GraphSnapshotNotFoundError:
+            context_id, counter = str(uuid4()), 1
+        evidence_reference = f"gateway-session:{session.session_id}:extraction:{counter}"
+        assets_by_selector: dict[PrimitiveObjectSelector, AssetReference] = {}
+        attributes: list[GraphAttribute] = []
+        for record in records:
+            locator = self._locator(record.selector, record.selector.object_class.kind.value, session)
+            try:
+                binding = self._identity_store.resolve_exact(locator)
+            except IdentityNotFoundError:
+                binding = self._identity_store.create(locator, evidence_reference=evidence_reference)
+            asset = AssetReference(
+                binding.product_identity,
+                binding.current_locator,
+                record.display_name,
+                _KIND_MAP[record.selector.object_class.kind],
+                record.selector.project_key,
+                IdentityLifecycleState.ACTIVE,
+            )
+            assets_by_selector[record.selector] = asset
+            for field in record.fields:
+                attributes.append(
+                    GraphAttribute(
+                        asset.product_identity,
+                        field.selector.kind.value,
+                        str(to_primitive(field.value)),
+                        GraphDataOrigin.EXTRACTED,
+                    )
+                )
+        relationships = self._extract_relationships(context, assets_by_selector)
+        ordered_assets = tuple(
+            sorted(assets_by_selector.values(), key=lambda item: item.product_identity.value)
+        )
+        fingerprint_value = canonical_digest(
+            {"configuration_key": active_context.configuration_key, "assets": ordered_assets},
+            kind="live-state-fingerprint",
+        )
+        fingerprint = LiveStateFingerprint(fingerprint_value)
+        now = datetime.now(timezone.utc)
+        dependency = DependencyFingerprint(
+            _DEPENDENCIES,
+            fingerprint,
+            CompletenessState.CONSERVATIVE,
+            now,
+            session.session_id,
+            evidence_reference,
+            VersionedName("supported-class-inventory", "1"),
+        )
+        freshness = FreshnessEvidence(
+            FreshnessLevel.VERIFIED,
+            now,
+            session.session_id,
+            active_context.configuration_key,
+            _DEPENDENCIES,
+            evidence_reference,
+            "supported-class-inventory",
+            "1",
+            False,
+        )
+        model_context = ModelContext(
+            context_id,
+            active_context.configuration_key,
+            session.powerfactory_version,
+            ordered_assets,
+            ExtractionRevision(context_id, counter),
+            now,
+            freshness,
+            (dependency,),
+        )
+        graph_assets = tuple(
+            sorted(
+                (
+                    GraphAsset(
+                        asset,
+                        None,
+                        None,
+                        True,
+                        False,
+                        None,
+                        2 if asset.asset_kind is AssetKind.TRANSFORMER else 0,
+                    )
+                    for asset in ordered_assets
+                ),
+                key=lambda item: item.asset.product_identity.value,
+            )
+        )
+        provenance = (
+            ExtractionProvenance(
+                "PowerFactory 2026 native gateway",
+                "Supported class subgraph only; switch, three-winding-transformer, and explicit out-of-service state mappings are not admitted.",
+                GraphDataOrigin.EXTRACTED,
+            ),
+        )
+        content = {
+            "context": model_context,
+            "assets": graph_assets,
+            "attributes": tuple(attributes),
+            "relationships": relationships,
+        }
+        return GraphSnapshot(
+            str(uuid4()),
+            model_context,
+            ContentDigest(canonical_digest(content)),
+            graph_assets,
+            tuple(sorted(attributes, key=lambda item: (item.asset_identity.value, item.name))),
+            relationships,
+            provenance,
+        )
+
+    def _query_all_objects(self, context: ContextObservation) -> tuple[ObjectObservation, ...]:
+        records: list[ObjectObservation] = []
+        for object_class in _SUPPORTED_CLASSES:
+            cursor = None
+            while True:
+                request = ObjectQueryRequest(
+                    context.configuration_key,
+                    ObjectQueryScope.ACTIVE_GRIDS,
+                    OutOfServicePolicy.EXCLUDE,
+                    (ObjectClassSelector(object_class, _CONTRACT),),
+                    _ATTRIBUTES_BY_CLASS[object_class],
+                    100,
+                    cursor,
+                )
+                batch = self._await_operation(
+                    self._owner.submit_query_objects(request, idempotency_key=f"inventory:{uuid4()}"),
+                    ObjectQueryBatch,
+                )
+                records.extend(batch.records)
+                if batch.complete:
+                    break
+                cursor = batch.next_cursor
+        return tuple(records)
+
+    def _extract_relationships(
+        self,
+        context: ContextObservation,
+        assets: dict[PrimitiveObjectSelector, AssetReference],
+    ) -> tuple[GraphRelationship, ...]:
+        equipment = [
+            selector
+            for selector in assets
+            if selector.object_class.kind
+            in {ObjectClassKind.LINE, ObjectClassKind.LOAD, ObjectClassKind.TRANSFORMER}
+        ]
+        relationships: list[GraphRelationship] = []
+        for offset in range(0, len(equipment), 100):
+            selected = tuple(equipment[offset:offset + 100])
+            observation = self._await_operation(
+                self._owner.submit_observe_dependencies(
+                    DependencyReadRequest(
+                        context.configuration_key,
+                        selected,
+                        (),
+                        (_CONNECTED_TERMINAL,),
+                        100,
+                    ),
+                    idempotency_key=f"topology:{uuid4()}",
+                ),
+                DependencyObservation,
+            )
+            if not observation.complete:
+                raise RuntimeError("PowerFactory topology dependency read was incomplete")
+            for item in observation.objects:
+                source = assets[item.selector]
+                for edge in item.relationships:
+                    target = assets.get(edge.target)
+                    if target is None:
+                        raise RuntimeError("topology references a terminal outside the admitted inventory")
+                    edge_id = canonical_digest(
+                        {"source": source.product_identity, "target": target.product_identity},
+                        kind="relationship-id",
+                    )
+                    relationships.append(
+                        GraphRelationship(
+                            edge_id,
+                            source.product_identity,
+                            target.product_identity,
+                            GraphRelationshipKind.CONNECTS,
+                            GraphDataOrigin.EXTRACTED,
+                            True,
+                        )
+                    )
+        return tuple(sorted(relationships, key=lambda item: item.relationship_id))
+
+    def _locator(
+        self,
+        selector: PrimitiveObjectSelector,
+        object_class: str,
+        session: SessionObservation,
+    ) -> PowerFactoryLocator:
+        return PowerFactoryLocator(
+            str(uuid4()),
+            LocatorKind.NATIVE_CANDIDATE if selector.native_value is not None else LocatorKind.CANONICAL_PATH_FALLBACK,
+            ProjectProvenance(
+                self._installation_id,
+                self._profile_id,
+                selector.project_key,
+                f"gateway-session:{session.session_id}",
+            ),
+            object_class,
+            selector.native_field,
+            selector.native_value,
+            selector.canonical_path,
+            LocatorEvidenceSchema("powerfactory-object-selector", "1", session.adapter_version),
+            datetime.now(timezone.utc),
+            session.session_id,
+            LocatorTrust.CANDIDATE if selector.native_value is not None else LocatorTrust.FALLBACK,
+            False,
+        )
