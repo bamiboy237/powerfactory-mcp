@@ -222,6 +222,7 @@ class PowerFactoryEngineeringRuntime:
                 self._installation_id,
                 self._profile_id,
                 self._await,
+                self._probe.cardinality_ceiling,
             )
             try:
                 self._session = self._await(
@@ -601,6 +602,7 @@ class _SupportedClassSnapshotExtractor:
         installation_id: str,
         profile_id: str,
         await_operation: Callable[[object, type[object]], object],
+        cardinality_ceiling: int,
     ) -> None:
         self._owner = owner
         self._identity_store = identity_store
@@ -608,6 +610,7 @@ class _SupportedClassSnapshotExtractor:
         self._installation_id = installation_id
         self._profile_id = profile_id
         self._await_operation = await_operation
+        self._cardinality_ceiling = cardinality_ceiling
 
     def extract_snapshot(
         self,
@@ -733,9 +736,21 @@ class _SupportedClassSnapshotExtractor:
 
     def _query_all_objects(self, context: ContextObservation) -> tuple[ObjectObservation, ...]:
         records: list[ObjectObservation] = []
+        # Conservative page ceiling derived from the product cardinality bound:
+        # at 100 records per page, this many pages per class reaches roughly
+        # the configured cardinality ceiling, after which extraction fails
+        # closed rather than silently truncating and labelling it complete.
+        page_ceiling = max(1, self._cardinality_ceiling // 100 + 1)
         for object_class in _SUPPORTED_CLASSES:
+            seen_cursors: set[object] = set()
             cursor = None
+            pages = 0
             while True:
+                pages += 1
+                if pages > page_ceiling:
+                    raise RuntimeOperationFailure(
+                        self._pagination_diagnostic(object_class, pages, "page_ceiling_exceeded")
+                    )
                 request = ObjectQueryRequest(
                     context.configuration_key,
                     ObjectQueryScope.ACTIVE_GRIDS,
@@ -750,10 +765,52 @@ class _SupportedClassSnapshotExtractor:
                     ObjectQueryBatch,
                 )
                 records.extend(batch.records)
+                if len(records) > self._cardinality_ceiling:
+                    raise RuntimeOperationFailure(
+                        self._pagination_diagnostic(object_class, pages, "record_ceiling_exceeded")
+                    )
                 if batch.complete:
                     break
-                cursor = batch.next_cursor
+                next_cursor = batch.next_cursor
+                if next_cursor is None:
+                    raise RuntimeOperationFailure(
+                        self._pagination_diagnostic(object_class, pages, "truncation_without_progress")
+                    )
+                if next_cursor == cursor or next_cursor in seen_cursors:
+                    raise RuntimeOperationFailure(
+                        self._pagination_diagnostic(object_class, pages, "repeated_cursor")
+                    )
+                seen_cursors.add(next_cursor)
+                cursor = next_cursor
         return tuple(records)
+
+    def _pagination_diagnostic(
+        self,
+        object_class: ObjectClassKind,
+        pages: int,
+        reason: str,
+    ) -> dict[str, object]:
+        """Sanitized pagination failure diagnostic without raw vendor data.
+
+        Records only the object class, observed page count, bounded reason
+        code, sanitized owner diagnostics, and process liveness; cursor tokens
+        and extracted records are intentionally excluded.
+        """
+
+        return {
+            "schema_version": "powerfactory-runtime-diagnostic/v1",
+            "evidence_id": (
+                f"pagination-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
+                f"{object_class.value}-{pages}.json"
+            ),
+            "pagination": {
+                "object_class": object_class.value,
+                "pages_observed": pages,
+                "reason": reason,
+            },
+            "owner": self._owner.diagnostics(),
+            "mcp_process": {"pid": os.getpid(), "alive": True},
+        }
 
     def _extract_relationships(
         self,
