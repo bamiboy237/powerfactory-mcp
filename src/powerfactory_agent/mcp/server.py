@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import os
+import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +35,25 @@ from .inspection import discover_context_candidates
 MCP_CONTRACT_VERSION = "mcp-operation-contracts/v0.1.0"
 _ALLOWED_ORIGINS = frozenset({"http://127.0.0.1", "http://localhost"})
 
+# Authoritative ordered tool-name catalog. The status tool reports this list
+# verbatim and Phase A's catalog compatibility test asserts it equals the
+# actual FastMCP registration, so the two cannot drift.
+_REGISTERED_TOOL_NAMES = (
+    "compare_results",
+    "get_asset_context",
+    "get_calculation_run",
+    "get_model_context",
+    "get_model_graph_summary",
+    "get_session_status",
+    "inspect_active_project",
+    "list_components",
+    "open_project_context",
+    "query_model_graph",
+    "refresh_model_graph",
+    "run_powerfactory_connectivity_probe",
+    "run_validated_load_flow",
+)
+
 
 class LocalBearerMiddleware(BaseHTTPMiddleware):
     """Require the installation token and reject browser origins outside loopback."""
@@ -53,6 +73,162 @@ class LocalBearerMiddleware(BaseHTTPMiddleware):
                 "UNAUTHENTICATED", "valid bearer authentication is required", 401
             )
         return await call_next(request)
+
+
+class SessionController:
+    """Single owner of lazy runtime creation, context admission, and shutdown state.
+
+    All mutation of the runtime reference, the active context, and the context
+    history happens under one re-entrant lock. Admission (runtime creation and
+    ``activate_context``) is serialized; ordinary inventory, graph, and
+    calculation operations only borrow the runtime reference and run without
+    holding the lock. The controller is the only owner of runtime/session
+    state; MCP tool handlers remain thin delegations.
+    """
+
+    def __init__(
+        self,
+        installation: McpInstallation,
+        *,
+        runtime_factory: Callable[[McpInstallation], EngineeringToolRuntime],
+        context_discovery: Callable[[McpInstallation, str | None], dict[str, Any]],
+        historical_context_count: int,
+        logger: logging.Logger,
+    ) -> None:
+        self._installation = installation
+        self._runtime_factory = runtime_factory
+        self._discover = context_discovery
+        self._historical_context_count = historical_context_count
+        self._logger = logger
+        self._runtime: EngineeringToolRuntime | None = None
+        self._active_context: dict[str, str] | None = None
+        self._context_history: list[dict[str, str]] = []
+        self._lock = threading.RLock()
+        self._shutdown_started = False
+
+    def status_payload(self) -> dict[str, object]:
+        with self._lock:
+            active_context = self._active_context
+            context_history_count = self._historical_context_count + len(self._context_history)
+
+        return {
+            "contract_version": MCP_CONTRACT_VERSION,
+            "service": "powerfactory-agent",
+            "transport": "streamable-http",
+            "endpoint": self._installation.endpoint_url,
+            "powerfactory_probe_configured": self._installation.probe_config_file is not None,
+            "context_state": "ACTIVE" if active_context is not None else "CONTEXT_REQUIRED",
+            "active_context": active_context,
+            "context_history_count": context_history_count,
+            "mcp_process": {"pid": os.getpid(), "alive": True},
+            "admitted_component_asset_kinds": list(ADMITTED_COMPONENT_ASSET_KINDS),
+            "registered_tools": list(_REGISTERED_TOOL_NAMES),
+            "mutation_tools_registered": False,
+        }
+
+    def open_project_context(
+        self,
+        project_selector: str | None,
+        study_case: str | None,
+        confirmed: bool,
+    ) -> dict[str, object]:
+        """Discover bounded choices or explicitly admit one exact PowerFactory context."""
+
+        if project_selector is not None and not project_selector.strip():
+            return _tool_error("INVALID_ARGUMENT", "project_selector must be non-empty when supplied")
+        if study_case is not None and not study_case.strip():
+            return _tool_error("INVALID_ARGUMENT", "study_case must be non-empty when supplied")
+        if project_selector is None or study_case is None or not confirmed:
+            try:
+                candidates = self._discover(self._installation, project_selector)
+            except Exception as exc:
+                self._logger.error(
+                    "mcp.open_project_context discovery_failed exception_type=%s",
+                    type(exc).__name__,
+                )
+                return _tool_error(
+                    "CONTEXT_DISCOVERY_FAILED",
+                    "PowerFactory context discovery failed; inspect sanitized evidence before retrying.",
+                )
+            return {
+                "status": "CONTEXT_REQUIRED" if project_selector is None or study_case is None else "CONFIRMATION_REQUIRED",
+                "contract_version": MCP_CONTRACT_VERSION,
+                "candidates": candidates,
+                "selected_project": project_selector,
+                "selected_study_case": study_case,
+            }
+
+        requested = {"project_selector": project_selector, "study_case": study_case}
+        with self._lock:
+            if self._shutdown_started:
+                return _tool_error(
+                    "ENGINE_OPERATION_UNAVAILABLE",
+                    "This MCP session is shutting down and cannot admit a new PowerFactory context.",
+                )
+            if self._active_context is not None:
+                if self._active_context == requested:
+                    return {
+                        "status": "OK",
+                        "contract_version": MCP_CONTRACT_VERSION,
+                        "context": self._active_context,
+                        "reused": True,
+                    }
+                return _tool_error(
+                    "CONTEXT_ALREADY_ACTIVE",
+                    "This MCP session already owns a different active PowerFactory context.",
+                )
+
+            def activate() -> dict[str, object]:
+                if self._runtime is None:
+                    self._runtime = self._runtime_factory(self._installation)
+                return self._runtime.activate_context(
+                    project_selector=project_selector, study_case=study_case
+                )
+
+            result = _run_engineering_tool(self._logger, "open_project_context", activate)
+            if result.get("status") != "ERROR":
+                self._active_context = requested
+                self._context_history.append(requested)
+                append_context_history(self._installation, requested)
+            return result
+
+    def require_runtime(self) -> EngineeringToolRuntime:
+        """Return the shared engineering runtime, lazily creating it exactly once.
+
+        The admission path creates the runtime before a context ever becomes
+        active, so a contextual tool with an active context observes the
+        existing runtime. Lazy creation is preserved for behavioral parity.
+        """
+
+        with self._lock:
+            if self._runtime is None:
+                self._runtime = self._runtime_factory(self._installation)
+            return self._runtime
+
+    def run_contextual_tool(
+        self,
+        name: str,
+        operation: Callable[[], dict[str, object]],
+    ) -> dict[str, object]:
+        with self._lock:
+            active_context = self._active_context
+        if active_context is None:
+            return _tool_error(
+                "CONTEXT_REQUIRED",
+                "Call open_project_context with an exact confirmed project and study case first.",
+            )
+        return _run_engineering_tool(self._logger, name, operation)
+
+    def shutdown(self) -> None:
+        """Reject further admission and close a started runtime at most once."""
+
+        with self._lock:
+            if self._shutdown_started:
+                return
+            self._shutdown_started = True
+            runtime = self._runtime
+        if runtime is not None:
+            _run_engineering_tool(self._logger, "shutdown", runtime.close)
 
 
 def create_server(
@@ -77,88 +253,25 @@ def create_server(
         streamable_http_path="/mcp",
         json_response=True,
     )
-    runtime: EngineeringToolRuntime | None = None
-    active_context: dict[str, str] | None = None
-    context_history: list[dict[str, str]] = []
-    historical_context_count = count_context_history(installation)
     discover = context_discovery or (
         lambda selected_installation, project: discover_context_candidates(
             selected_installation, project_selector=project
         )
     )
-
-    def engineering_runtime() -> EngineeringToolRuntime:
-        nonlocal runtime
-        if runtime is None:
-            runtime = runtime_factory(installation)
-        return runtime
-
-    def run_engineering_tool(name: str, operation: Callable[[], dict[str, object]]) -> dict[str, object]:
-        """Contain ordinary Python tool exceptions without claiming native crash isolation."""
-
-        try:
-            return operation()
-        except ValueError as exc:
-            logger.info("mcp.%s rejected_request exception_type=%s", name, type(exc).__name__)
-            return _tool_error("INVALID_ARGUMENT", str(exc))
-        except Exception as exc:
-            diagnostic = getattr(exc, "diagnostic", None)
-            logger.error("mcp.%s failed exception_type=%s", name, type(exc).__name__)
-            if isinstance(diagnostic, dict):
-                return _tool_error(
-                    "RUNTIME_OPERATION_FAILED",
-                    "PowerFactory operation requires investigation; diagnostic evidence was persisted.",
-                    diagnostic=diagnostic,
-                )
-            return _tool_error(
-                "ENGINEERING_TOOL_FAILED",
-                "The MCP server handled this tool exception; native host crashes require process isolation.",
-            )
-
-    def run_contextual_tool(
-        name: str, operation: Callable[[], dict[str, object]]
-    ) -> dict[str, object]:
-        if active_context is None:
-            return _tool_error(
-                "CONTEXT_REQUIRED",
-                "Call open_project_context with an exact confirmed project and study case first.",
-            )
-        return run_engineering_tool(name, operation)
+    controller = SessionController(
+        installation,
+        runtime_factory=runtime_factory,
+        context_discovery=discover,
+        historical_context_count=count_context_history(installation),
+        logger=logger,
+    )
 
     @server.tool()
     def get_session_status() -> dict[str, object]:
         """Return local service configuration status; never starts PowerFactory."""
 
-        payload = {
-            "contract_version": MCP_CONTRACT_VERSION,
-            "service": "powerfactory-agent",
-            "transport": "streamable-http",
-            "endpoint": installation.endpoint_url,
-            "powerfactory_probe_configured": installation.probe_config_file is not None,
-            "context_state": "ACTIVE" if active_context is not None else "CONTEXT_REQUIRED",
-            "active_context": active_context,
-            "context_history_count": historical_context_count + len(context_history),
-            "mcp_process": {"pid": os.getpid(), "alive": True},
-            "admitted_component_asset_kinds": list(ADMITTED_COMPONENT_ASSET_KINDS),
-            "registered_tools": [
-                "compare_results",
-                "get_asset_context",
-                "get_calculation_run",
-                "get_model_context",
-                "get_model_graph_summary",
-                "get_session_status",
-                "inspect_active_project",
-                "list_components",
-                "open_project_context",
-                "query_model_graph",
-                "refresh_model_graph",
-                "run_powerfactory_connectivity_probe",
-                "run_validated_load_flow",
-            ],
-            "mutation_tools_registered": False,
-        }
         logger.info("mcp.get_session_status")
-        return payload
+        return controller.status_payload()
 
     @server.tool()
     def open_project_context(
@@ -168,57 +281,15 @@ def create_server(
     ) -> dict[str, object]:
         """Discover bounded choices or explicitly admit one exact PowerFactory project context."""
 
-        nonlocal active_context
-        if project_selector is not None and not project_selector.strip():
-            return _tool_error("INVALID_ARGUMENT", "project_selector must be non-empty when supplied")
-        if study_case is not None and not study_case.strip():
-            return _tool_error("INVALID_ARGUMENT", "study_case must be non-empty when supplied")
-        if project_selector is None or study_case is None or not confirmed:
-            try:
-                candidates = discover(installation, project_selector)
-            except Exception as exc:
-                logger.error("mcp.open_project_context discovery_failed exception_type=%s", type(exc).__name__)
-                return _tool_error(
-                    "CONTEXT_DISCOVERY_FAILED",
-                    "PowerFactory context discovery failed; inspect sanitized evidence before retrying.",
-                )
-            return {
-                "status": "CONTEXT_REQUIRED" if project_selector is None or study_case is None else "CONFIRMATION_REQUIRED",
-                "contract_version": MCP_CONTRACT_VERSION,
-                "candidates": candidates,
-                "selected_project": project_selector,
-                "selected_study_case": study_case,
-            }
-        requested = {"project_selector": project_selector, "study_case": study_case}
-        if active_context is not None:
-            if active_context == requested:
-                return {
-                    "status": "OK",
-                    "contract_version": MCP_CONTRACT_VERSION,
-                    "context": active_context,
-                    "reused": True,
-                }
-            return _tool_error(
-                "CONTEXT_ALREADY_ACTIVE",
-                "This MCP session already owns a different active PowerFactory context.",
-            )
-        result = run_engineering_tool(
-            "open_project_context",
-            lambda: engineering_runtime().activate_context(
-                project_selector=project_selector, study_case=study_case
-            ),
-        )
-        if result.get("status") != "ERROR":
-            active_context = requested
-            context_history.append(requested)
-            append_context_history(installation, requested)
-        return result
+        return controller.open_project_context(project_selector, study_case, confirmed)
 
     @server.tool()
     def get_model_context() -> dict[str, object]:
         """Return the verified active PowerFactory context and persisted extraction binding."""
 
-        return run_contextual_tool("get_model_context", lambda: engineering_runtime().get_model_context())
+        return controller.run_contextual_tool(
+            "get_model_context", lambda: controller.require_runtime().get_model_context()
+        )
 
     @server.tool()
     def list_components(
@@ -228,10 +299,10 @@ def create_server(
     ) -> dict[str, object]:
         """List a bounded page of identified components from the active model."""
 
-        return run_contextual_tool(
+        return controller.run_contextual_tool(
             "list_components",
             lambda: _list_components(
-                engineering_runtime,
+                controller.require_runtime,
                 asset_kind=asset_kind,
                 limit=limit,
                 cursor=cursor,
@@ -242,27 +313,27 @@ def create_server(
     def get_asset_context(product_identity: str) -> dict[str, object]:
         """Return verified locator, attributes, and topology evidence for one product UUID."""
 
-        return run_contextual_tool(
+        return controller.run_contextual_tool(
             "get_asset_context",
-            lambda: engineering_runtime().get_asset_context(product_identity=product_identity),
+            lambda: controller.require_runtime().get_asset_context(product_identity=product_identity),
         )
 
     @server.tool()
     def run_validated_load_flow(idempotency_key: str) -> dict[str, object]:
         """Run and persist a bounded load flow for the verified active model context."""
 
-        return run_contextual_tool(
+        return controller.run_contextual_tool(
             "run_validated_load_flow",
-            lambda: engineering_runtime().run_validated_load_flow(idempotency_key=idempotency_key),
+            lambda: controller.require_runtime().run_validated_load_flow(idempotency_key=idempotency_key),
         )
 
     @server.tool()
     def get_calculation_run(run_id: str) -> dict[str, object]:
         """Return one immutable persisted calculation run and its result reference."""
 
-        return run_contextual_tool(
+        return controller.run_contextual_tool(
             "get_calculation_run",
-            lambda: engineering_runtime().get_calculation_run(run_id=run_id),
+            lambda: controller.require_runtime().get_calculation_run(run_id=run_id),
         )
 
     @server.tool()
@@ -272,9 +343,9 @@ def create_server(
     ) -> dict[str, object]:
         """Compare two immutable result snapshots from the same verified context and policy."""
 
-        return run_contextual_tool(
+        return controller.run_contextual_tool(
             "compare_results",
-            lambda: engineering_runtime().compare_results(
+            lambda: controller.require_runtime().compare_results(
                 baseline_snapshot_id=baseline_snapshot_id,
                 candidate_snapshot_id=candidate_snapshot_id,
             ),
@@ -284,14 +355,16 @@ def create_server(
     def refresh_model_graph() -> dict[str, object]:
         """Persist a bounded graph of supported classes and report known coverage gaps."""
 
-        return run_contextual_tool("refresh_model_graph", lambda: engineering_runtime().refresh_model_graph())
+        return controller.run_contextual_tool(
+            "refresh_model_graph", lambda: controller.require_runtime().refresh_model_graph()
+        )
 
     @server.tool()
     def get_model_graph_summary() -> dict[str, object]:
         """Return the latest persisted topology revision and extraction counts."""
 
-        return run_contextual_tool(
-            "get_model_graph_summary", lambda: engineering_runtime().get_model_graph_summary()
+        return controller.run_contextual_tool(
+            "get_model_graph_summary", lambda: controller.require_runtime().get_model_graph_summary()
         )
 
     @server.tool()
@@ -307,9 +380,9 @@ def create_server(
     ) -> dict[str, object]:
         """Run a bounded components, neighborhood, or impact query on persisted topology."""
 
-        return run_contextual_tool(
+        return controller.run_contextual_tool(
             "query_model_graph",
-            lambda: engineering_runtime().query_model_graph(
+            lambda: controller.require_runtime().query_model_graph(
                 query_kind=query_kind,
                 model_context_id=model_context_id,
                 extraction_revision=extraction_revision,
@@ -373,6 +446,33 @@ def _configure_logger(path: Path) -> logging.Logger:
         logger.setLevel(logging.INFO)
         logger.propagate = False
     return logger
+
+
+def _run_engineering_tool(
+    logger: logging.Logger,
+    name: str,
+    operation: Callable[[], dict[str, object]],
+) -> dict[str, object]:
+    """Contain ordinary Python tool exceptions without claiming native crash isolation."""
+
+    try:
+        return operation()
+    except ValueError as exc:
+        logger.info("mcp.%s rejected_request exception_type=%s", name, type(exc).__name__)
+        return _tool_error("INVALID_ARGUMENT", str(exc))
+    except Exception as exc:
+        diagnostic = getattr(exc, "diagnostic", None)
+        logger.error("mcp.%s failed exception_type=%s", name, type(exc).__name__)
+        if isinstance(diagnostic, dict):
+            return _tool_error(
+                "RUNTIME_OPERATION_FAILED",
+                "PowerFactory operation requires investigation; diagnostic evidence was persisted.",
+                diagnostic=diagnostic,
+            )
+        return _tool_error(
+            "ENGINEERING_TOOL_FAILED",
+            "The MCP server handled this tool exception; native host crashes require process isolation.",
+        )
 
 
 def _write_evidence(installation: McpInstallation, evidence: dict[str, object]) -> Path:

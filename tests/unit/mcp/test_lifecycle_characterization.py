@@ -26,8 +26,10 @@ import unittest
 
 from starlette.testclient import TestClient
 
+import logging
+
 from powerfactory_agent.mcp.configuration import create_installation
-from powerfactory_agent.mcp.server import build_asgi_app, create_server
+from powerfactory_agent.mcp.server import SessionController, build_asgi_app, create_server
 
 
 class _RecordingRuntime:
@@ -165,24 +167,21 @@ class ContextAdmissionLifecycleTests(unittest.TestCase):
             self.assertEqual("OK", second["status"])
             self.assertEqual(2, calls["count"])
 
-    @unittest.expectedFailure
     def test_concurrent_confirmed_context_admission_creates_at_most_one_runtime(self) -> None:
-        # Phase B unblocks this: a controller must serialize lazy runtime
-        # creation so two concurrent confirmed admissions share one runtime
-        # and one engine session. The barrier forces both threads into the
-        # factory simultaneously, which the unsynchronized implementation
-        # deterministically allows (two creations instead of one).
+        # The controller serializes runtime creation and context admission
+        # under one lock. Many concurrent confirmed admissions for the same
+        # context must share exactly one runtime and one activation. No
+        # sleeps or barriers are needed: the lock makes the outcome
+        # deterministic regardless of scheduling.
         with tempfile.TemporaryDirectory() as directory:
             installation = create_installation(Path(directory) / "agent")
-            created: list[_RecordingRuntime] = []
-            lock = threading.Lock()
-            barrier = threading.Barrier(2, timeout=1.0)
+            runtime = _RecordingRuntime()
+            creations = {"count": 0}
+            creation_lock = threading.Lock()
 
             def factory(_: object) -> _RecordingRuntime:
-                runtime = _RecordingRuntime()
-                with lock:
-                    created.append(runtime)
-                barrier.wait()
+                with creation_lock:
+                    creations["count"] += 1
                 return runtime
 
             server = create_server(
@@ -199,13 +198,52 @@ class ContextAdmissionLifecycleTests(unittest.TestCase):
                     )
                 )
 
-            threads = [threading.Thread(target=admit), threading.Thread(target=admit)]
+            threads = [threading.Thread(target=admit) for _ in range(8)]
             for thread in threads:
                 thread.start()
             for thread in threads:
                 thread.join(5)
 
-            self.assertEqual(1, len(created))
+            results = [
+                asyncio.run(
+                    server.call_tool(
+                        "open_project_context",
+                        {"project_selector": "Project A", "study_case": "Case A", "confirmed": True},
+                    )
+                )[1]
+                for _ in range(2)
+            ]
+
+            self.assertEqual(1, creations["count"])
+            self.assertEqual(1, runtime.activate_calls)
+            for result in results:
+                self.assertEqual("OK", result["status"])
+                self.assertTrue(result["reused"])
+
+    def test_shutdown_closes_a_started_runtime_at_most_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            installation = create_installation(Path(directory) / "agent")
+            runtime = _RecordingRuntime()
+            controller = SessionController(
+                installation,
+                runtime_factory=lambda _: runtime,
+                context_discovery=_discovery,
+                historical_context_count=0,
+                logger=logging.getLogger("test.lifecycle"),
+            )
+
+            admitted = controller.open_project_context("Project A", "Case A", True)
+            self.assertEqual("OK", admitted["status"])
+            self.assertEqual(1, runtime.activate_calls)
+
+            controller.shutdown()
+            controller.shutdown()
+
+            self.assertEqual(1, runtime.close_calls)
+
+            rejected = controller.open_project_context("Project B", "Case B", True)
+            self.assertEqual("ERROR", rejected["status"])
+            self.assertEqual("ENGINE_OPERATION_UNAVAILABLE", rejected["error"]["code"])
 
     def test_status_tool_registered_tools_matches_actual_catalog(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
