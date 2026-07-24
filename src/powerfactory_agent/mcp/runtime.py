@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import sys
+import threading
 import time
 from uuid import uuid4
 
@@ -133,62 +134,113 @@ class PowerFactoryEngineeringRuntime:
     def __init__(self, installation: McpInstallation) -> None:
         self._installation = installation
         probe = load_probe_config(installation)
-        state_dir = installation.log_file.parent
-        database = SQLiteDatabase(state_dir / "powerfactory-agent.sqlite3")
-        installation_id = f"powerfactory-2026:{canonical_digest(probe.pyd_path)[:24]}"
-        profile_id = probe.user_profile_env_var or "default-profile"
-        mappings = {
-            "context.active",
-            "context.activate",
-            "relationship.connected_terminal",
-            "command.load_flow",
-            *(f"class.{kind.value}" for kind in _SUPPORTED_CLASSES),
-            *(f"attribute.{kind.value}" for kind in AttributeKind),
-            "result.bus_voltage",
-            "result.equipment_loading",
-        }
-        vendor = NativePowerFactory2026Vendor(
-            NativePowerFactory2026Config(
-                pyd_path=probe.pyd_path,
-                installation_id=installation_id,
-                profile_id=profile_id,
-                expected_python_abi=sys.implementation.cache_tag or "unknown",
-                expected_architecture=platform.machine(),
-                accepted_mappings=frozenset(mappings),
-                cardinality_ceiling=probe.cardinality_ceiling,
-                user_profile_env_var=probe.user_profile_env_var,
-                password_env_var=probe.password_env_var,
-            )
-        )
-        gateway = PowerFactoryGateway2026(vendor)
-        self._owner = SerializedPowerFactoryOwner(
-            gateway,
-            OperationStore(database),
-            max_queue_size=64,
-            queue_deadline_ms=30_000,
-            client_response_deadline_ms=60_000,
-            engine_health_threshold_ms=120_000,
-        )
-        self._identity_store = IdentityStore(database)
-        self._graph_store = ModelGraphStore(database)
-        self._graph = PersistentModelGraph(self._graph_store)
-        self._calculation_store = CalculationStore(database)
-        self._calculations = LoadFlowService(
-            self._owner,
-            self._calculation_store,
-            owner_wait_timeout_seconds=120.0,
-        )
-        self._installation_id = installation_id
-        self._profile_id = profile_id
         self._probe = probe
-        self._context: ContextObservation | None = None
-        self._session = self._await(
-            self._owner.submit_start(
-                SessionStartRequest(installation_id, profile_id, "2026", "configured", True),
-                idempotency_key=f"session-start:{uuid4()}",
-            ),
-            SessionObservation,
+        self._state_dir = installation.log_file.parent
+        self._installation_id = f"powerfactory-2026:{canonical_digest(probe.pyd_path)[:24]}"
+        self._profile_id = probe.user_profile_env_var or "default-profile"
+        self._accepted_mappings = frozenset(
+            {
+                "context.active",
+                "context.activate",
+                "relationship.connected_terminal",
+                "command.load_flow",
+                *(f"class.{kind.value}" for kind in _SUPPORTED_CLASSES),
+                *(f"attribute.{kind.value}" for kind in AttributeKind),
+                "result.bus_voltage",
+                "result.equipment_loading",
+            }
         )
+        self._context: ContextObservation | None = None
+        self._started = False
+        self._startup_lock = threading.Lock()
+        # Startup-acquired collaborators remain None until successful explicit
+        # startup so construction creates no database, thread, or native session.
+        self._database: SQLiteDatabase | None = None
+        self._owner: SerializedPowerFactoryOwner | None = None
+        self._identity_store: IdentityStore | None = None
+        self._graph_store: ModelGraphStore | None = None
+        self._graph: PersistentModelGraph | None = None
+        self._calculation_store: CalculationStore | None = None
+        self._calculations: LoadFlowService | None = None
+        self._session: SessionObservation | None = None
+
+    def _start(self) -> None:
+        """Explicit, idempotent runtime startup with side effects.
+
+        Construction only captures validated configuration; database
+        initialization, native gateway composition, serialized owner/worker
+        creation, and session-start submission happen here, only after a
+        confirmed context admission requests the first runtime operation. A
+        partial failure cleans up resources actually acquired and retains
+        sanitized failure evidence on the raised ``RuntimeOperationFailure``.
+        ``powerfactory.pyd`` is only loaded through the serialized owner call
+        path inside ``submit_start``.
+        """
+
+        with self._startup_lock:
+            if self._started:
+                return
+            database = SQLiteDatabase(self._state_dir / "powerfactory-agent.sqlite3")
+            vendor = NativePowerFactory2026Vendor(
+                NativePowerFactory2026Config(
+                    pyd_path=self._probe.pyd_path,
+                    installation_id=self._installation_id,
+                    profile_id=self._profile_id,
+                    expected_python_abi=sys.implementation.cache_tag or "unknown",
+                    expected_architecture=platform.machine(),
+                    accepted_mappings=self._accepted_mappings,
+                    cardinality_ceiling=self._probe.cardinality_ceiling,
+                    user_profile_env_var=self._probe.user_profile_env_var,
+                    password_env_var=self._probe.password_env_var,
+                )
+            )
+            gateway = PowerFactoryGateway2026(vendor)
+            owner = SerializedPowerFactoryOwner(
+                gateway,
+                OperationStore(database),
+                max_queue_size=64,
+                queue_deadline_ms=30_000,
+                client_response_deadline_ms=60_000,
+                engine_health_threshold_ms=120_000,
+            )
+            self._database = database
+            self._owner = owner
+            self._identity_store = IdentityStore(database)
+            self._graph_store = ModelGraphStore(database)
+            self._graph = PersistentModelGraph(self._graph_store)
+            self._calculation_store = CalculationStore(database)
+            self._calculations = LoadFlowService(
+                owner,
+                self._calculation_store,
+                owner_wait_timeout_seconds=120.0,
+            )
+            try:
+                self._session = self._await(
+                    owner.submit_start(
+                        SessionStartRequest(
+                            self._installation_id,
+                            self._profile_id,
+                            "2026",
+                            "configured",
+                            True,
+                        ),
+                        idempotency_key=f"session-start:{uuid4()}",
+                    ),
+                    SessionObservation,
+                )
+            except Exception:
+                self._session = None
+                owner.shutdown_serialization(timeout_ms=5_000)
+                self._owner = None
+                self._database = None
+                self._identity_store = None
+                self._graph_store = None
+                self._graph = None
+                self._calculation_store = None
+                self._calculations = None
+                raise
+            self._started = True
+
     def activate_context(self, *, project_selector: str, study_case: str) -> dict[str, object]:
         """Activate and verify the explicitly admitted project context for this process only."""
 
@@ -196,6 +248,7 @@ class PowerFactoryEngineeringRuntime:
             raise ValueError("project_selector and study_case must be non-empty")
         if self._context is not None:
             raise ValueError("an active PowerFactory context already exists for this MCP session")
+        self._start()
         activated = self._await(
             self._owner.submit_activate_context(
                 ContextActivationRequest(project_selector, study_case, None),
@@ -348,11 +401,19 @@ class PowerFactoryEngineeringRuntime:
         )
 
     def close(self) -> None:
-        try:
-            record = self._owner.submit_close(idempotency_key=f"session-close:{uuid4()}")
-            self._await(record, CleanupObservation)
-        finally:
-            self._owner.shutdown_serialization(timeout_ms=5_000)
+        owner = self._owner
+        if owner is None:
+            # Construction is side-effect free and a failed startup already
+            # released its owner; close before startup is a harmless no-op.
+            return
+        if self._started:
+            try:
+                record = owner.submit_close(idempotency_key=f"session-close:{uuid4()}")
+                self._await(record, CleanupObservation)
+            finally:
+                owner.shutdown_serialization(timeout_ms=5_000)
+        else:
+            owner.shutdown_serialization(timeout_ms=5_000)
 
     def _require_context(self) -> ContextObservation:
         if self._context is None:
