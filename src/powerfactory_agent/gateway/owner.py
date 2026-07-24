@@ -271,6 +271,16 @@ class SerializedPowerFactoryOwner:
     def status(self, operation_id: str) -> OperationRecord:
         return self._worker.status(operation_id)
 
+    def wait_for_terminal(self, operation_id: str, *, timeout_ms: int) -> OperationRecord:
+        """Block on the worker's condition variable until terminal or timeout.
+
+        Replaces repeated SQLite status polling with a single condition-based
+        wait. Returns the terminal record, or the latest non-terminal record if
+        ``timeout_ms`` elapses first; it never cancels the underlying operation.
+        """
+
+        return self._worker.wait_for_terminal(operation_id, timeout_ms=timeout_ms)
+
     def completed_result(self, operation_id: str, result_type: type[ResultT]) -> ResultT:
         if not isinstance(result_type, type):
             raise TypeError("result_type must be a type")

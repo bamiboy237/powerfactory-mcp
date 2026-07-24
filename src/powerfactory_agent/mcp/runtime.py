@@ -10,7 +10,6 @@ import os
 import platform
 import sys
 import threading
-import time
 from uuid import uuid4
 
 from powerfactory_agent.domain import (
@@ -487,16 +486,13 @@ class PowerFactoryEngineeringRuntime:
 
     def _await(self, record: object, result_type: type[object]) -> object:
         operation_id = getattr(record, "operation_id")
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            status = self._owner.status(operation_id)
-            if status.terminal:
-                try:
-                    return self._owner.completed_result(operation_id, result_type)
-                except OperationResultUnavailableError as exc:
-                    raise RuntimeOperationFailure(self._persist_operation_failure(exc)) from exc
-            time.sleep(0.005)
-        raise RuntimeOperationFailure(self._persist_timeout(operation_id))
+        terminal = self._owner.wait_for_terminal(operation_id, timeout_ms=120_000)
+        if not terminal.terminal:
+            raise RuntimeOperationFailure(self._persist_timeout(operation_id))
+        try:
+            return self._owner.completed_result(operation_id, result_type)
+        except OperationResultUnavailableError as exc:
+            raise RuntimeOperationFailure(self._persist_operation_failure(exc)) from exc
 
     def _persist_operation_failure(
         self,
