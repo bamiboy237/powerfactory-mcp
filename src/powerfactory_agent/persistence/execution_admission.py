@@ -28,6 +28,14 @@ from powerfactory_agent.domain.workflow import (
 )
 from powerfactory_agent.serialization import canonical_json, from_json
 
+from ._transactional_writers import (
+    append_lease_event,
+    append_workflow_audit_event,
+    encode_utc_timestamp,
+    insert_workflow_command,
+    mint_fencing_token,
+    write_lease_row,
+)
 from .database import SQLiteDatabase
 
 
@@ -328,23 +336,15 @@ class ExecutionAdmissionCoordinator:
         evidence_reference: str,
         command_id: str,
     ) -> ContextLease:
-        counter = connection.execute(
-            """SELECT last_fencing_token FROM context_lease_fence_counters
-            WHERE service_scope_digest = ? AND configuration_key = ?""",
-            (service_scope_digest.value, intent.configuration_key.value),
-        ).fetchone()
-        token = 1 if counter is None else int(counter["last_fencing_token"]) + 1
+        token = mint_fencing_token(
+            connection,
+            service_scope_digest=service_scope_digest,
+            configuration_key=intent.configuration_key,
+        )
         if intent.fencing_token != token:
             raise ExecutionAdmissionRejectedError(
                 "intent fencing token does not match the next durable scope token"
             )
-        connection.execute(
-            """INSERT INTO context_lease_fence_counters(
-            service_scope_digest, configuration_key, last_fencing_token
-            ) VALUES (?, ?, ?) ON CONFLICT(service_scope_digest, configuration_key)
-            DO UPDATE SET last_fencing_token = excluded.last_fencing_token""",
-            (service_scope_digest.value, intent.configuration_key.value, token),
-        )
         held = ContextLease(
             lease_id=intent.lease_id,
             service_scope_digest=service_scope_digest,
@@ -377,33 +377,7 @@ class ExecutionAdmissionCoordinator:
 
     @staticmethod
     def _write_lease(connection: sqlite3.Connection, lease: ContextLease) -> None:
-        connection.execute(
-            """INSERT INTO context_leases(
-            service_scope_digest, configuration_key, lease_id, workflow_id,
-            workflow_version_counter, fencing_token, mode, state, issued_at,
-            expires_at, owner_instance_id, operation_id, recovery_disposition, lease_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(service_scope_digest, configuration_key) DO UPDATE SET
-                lease_id = excluded.lease_id,
-                workflow_id = excluded.workflow_id,
-                workflow_version_counter = excluded.workflow_version_counter,
-                fencing_token = excluded.fencing_token,
-                mode = excluded.mode,
-                state = excluded.state,
-                issued_at = excluded.issued_at,
-                expires_at = excluded.expires_at,
-                owner_instance_id = excluded.owner_instance_id,
-                operation_id = excluded.operation_id,
-                recovery_disposition = excluded.recovery_disposition,
-                lease_json = excluded.lease_json""",
-            (
-                lease.service_scope_digest.value, lease.configuration_key.value, lease.lease_id,
-                lease.workflow_id, lease.workflow_version.counter, lease.fencing_token,
-                lease.mode.value, lease.state.value, _timestamp(lease.issued_at),
-                _timestamp(lease.expires_at), lease.owner_instance_id, lease.operation_id,
-                lease.recovery_disposition, canonical_json(lease),
-            ),
-        )
+        write_lease_row(connection, lease)
 
     @staticmethod
     def _insert_lease_event(
@@ -420,17 +394,7 @@ class ExecutionAdmissionCoordinator:
             evidence_reference=evidence_reference, command_id=command_id,
             operation_id=lease.operation_id,
         )
-        connection.execute(
-            """INSERT INTO context_lease_events(
-            event_id, lease_id, service_scope_digest, configuration_key, workflow_id,
-            workflow_version_counter, fencing_token, event_type, occurred_at, event_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                event.event_id, event.lease_id, event.service_scope_digest.value,
-                event.configuration_key.value, event.workflow_id, event.workflow_version.counter,
-                event.fencing_token, event.event_type.value, _timestamp(event.occurred_at), canonical_json(event),
-            ),
-        )
+        append_lease_event(connection, event)
 
     @staticmethod
     def _insert_intent(connection: sqlite3.Connection, intent: WriteAheadIntent) -> None:
@@ -478,18 +442,7 @@ class ExecutionAdmissionCoordinator:
 
     @staticmethod
     def _insert_command(connection: sqlite3.Connection, command: IdempotentCommandRecord) -> None:
-        connection.execute(
-            """INSERT INTO workflow_commands(
-            command_id, workflow_id, command_name, idempotency_key, request_digest,
-            expected_version_counter, resulting_version_counter, command_json, recorded_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                command.command_id, command.workflow_id, command.command_name,
-                command.idempotency_key, command.request_digest.value,
-                command.expected_workflow_version.counter, command.resulting_workflow_version.counter,
-                canonical_json(command), _timestamp(command.requested_at),
-            ),
-        )
+        insert_workflow_command(connection, command)
 
     @staticmethod
     def _audit(
@@ -510,19 +463,11 @@ class ExecutionAdmissionCoordinator:
 
     @staticmethod
     def _insert_audit(connection: sqlite3.Connection, event: AuditEvent) -> None:
-        connection.execute(
-            """INSERT INTO workflow_audit_events(
-            event_id, workflow_id, workflow_version_counter, event_type, occurred_at, event_json
-            ) VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                event.event_id, event.workflow_id, event.workflow_version.counter,
-                event.event_type.value, _timestamp(event.occurred_at), canonical_json(event),
-            ),
-        )
+        append_workflow_audit_event(connection, event)
 
 
 def _timestamp(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return encode_utc_timestamp(value)
 
 
 __all__ = [

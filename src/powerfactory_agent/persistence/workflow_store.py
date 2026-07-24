@@ -19,6 +19,11 @@ from powerfactory_agent.domain.workflow import (
 from powerfactory_agent.domain.values import ContentDigest, WorkflowVersion, require_aware
 from powerfactory_agent.serialization import canonical_json, from_json
 
+from ._transactional_writers import (
+    append_workflow_audit_event,
+    encode_utc_timestamp,
+    insert_workflow_command,
+)
 from .database import SQLiteDatabase
 
 
@@ -287,23 +292,7 @@ class WorkflowStore:
                 authorization_reference=authorization_reference,
                 fencing_token=fencing_token,
             )
-            connection.execute(
-                """INSERT INTO workflow_commands(
-                command_id, workflow_id, command_name, idempotency_key, request_digest,
-                expected_version_counter, resulting_version_counter, command_json, recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    command.command_id,
-                    workflow_id,
-                    command_name,
-                    idempotency_key,
-                    request_digest.value,
-                    expected_workflow_version.counter,
-                    next_version.counter,
-                    canonical_json(command),
-                    _timestamp(occurred_at),
-                ),
-            )
+            insert_workflow_command(connection, command)
             cursor = connection.execute(
                 """UPDATE workflow_records SET state = ?, workflow_version_counter = ?, record_json = ?, updated_at = ?
                 WHERE workflow_id = ? AND workflow_version_counter = ?""",
@@ -338,23 +327,11 @@ class WorkflowStore:
 
     @staticmethod
     def _insert_audit(connection: sqlite3.Connection, event: AuditEvent) -> None:
-        connection.execute(
-            """INSERT INTO workflow_audit_events(
-            event_id, workflow_id, workflow_version_counter, event_type, occurred_at, event_json
-            ) VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                event.event_id,
-                event.workflow_id,
-                event.workflow_version.counter,
-                event.event_type.value,
-                _timestamp(event.occurred_at),
-                canonical_json(event),
-            ),
-        )
+        append_workflow_audit_event(connection, event)
 
 
 def _timestamp(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return encode_utc_timestamp(value)
 
 
 __all__ = [
