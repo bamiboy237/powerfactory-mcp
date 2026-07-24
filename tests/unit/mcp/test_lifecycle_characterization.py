@@ -3,13 +3,10 @@
 These tests pin invariants about lazy runtime creation, context admission,
 replay, fail-closed behavior, shutdown, and the status-tool tool catalog.
 
-Phase A only characterizes behavior; it intentionally does not change
-production code. Invariants the current unsynchronized ``create_server``
-implementation already satisfies are asserted directly. Invariants that
-require the concurrency-safe controller (Phase B) or ASGI shutdown hookup
-(Phase C) are recorded with ``unittest.expectedFailure`` so the suite stays
-green while documenting the gap; those decorators are removed once the
-responsible phase lands the safe behavior.
+Phase A introduced these tests against the then-unsynchronized ``create_server``
+surface; Phase B added the concurrency-safe SessionController and Phase C wired
+ASGI shutdown to controller cleanup, so all invariants now assert directly
+without expectedFailure markers.
 
 Inventory pagination cursor rejection (runtime ``_query_all_objects``) is
 covered in Phase H, where the bounded-progress behavior is introduced; testing
@@ -276,11 +273,9 @@ class ApplicationShutdownLifecycleTests(unittest.TestCase):
 
             self.assertEqual([], starts)
 
-    @unittest.expectedFailure
     def test_application_shutdown_closes_a_started_runtime_exactly_once(self) -> None:
-        # Phase C unblocks this: ASGI shutdown must invoke controller cleanup,
-        # which closes the runtime exactly once. Today the lifespan does not
-        # call close, so close_calls stays at zero.
+        # ASGI shutdown invokes controller.cleanup, which closes a started
+        # runtime exactly once through the serialized owner path.
         with tempfile.TemporaryDirectory() as directory:
             installation = create_installation(Path(directory) / "agent")
             runtime = _RecordingRuntime()

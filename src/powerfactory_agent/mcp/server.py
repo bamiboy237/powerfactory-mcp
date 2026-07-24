@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -242,17 +243,6 @@ def create_server(
     """Create the minimal real MCP product surface without fake model behavior."""
 
     logger = _configure_logger(installation.log_file)
-    server = FastMCP(
-        "powerfactory-agent",
-        instructions=(
-            "Safe PowerFactory MCP engineering service. Call open_project_context before "
-            "project-dependent reads, calculations, or topology. No mutation tools are registered."
-        ),
-        host=installation.host,
-        port=installation.port,
-        streamable_http_path="/mcp",
-        json_response=True,
-    )
     discover = context_discovery or (
         lambda selected_installation, project: discover_context_candidates(
             selected_installation, project_selector=project
@@ -264,6 +254,29 @@ def create_server(
         context_discovery=discover,
         historical_context_count=count_context_history(installation),
         logger=logger,
+    )
+
+    @asynccontextmanager
+    async def lifespan(_fastmcp: Any):
+        # Startup is side-effect free: building the app never starts a
+        # PowerFactory runtime. On shutdown, reject further admission and
+        # submit gateway cleanup through the serialized owner exactly once.
+        try:
+            yield
+        finally:
+            controller.shutdown()
+
+    server = FastMCP(
+        "powerfactory-agent",
+        instructions=(
+            "Safe PowerFactory MCP engineering service. Call open_project_context before "
+            "project-dependent reads, calculations, or topology. No mutation tools are registered."
+        ),
+        host=installation.host,
+        port=installation.port,
+        streamable_http_path="/mcp",
+        json_response=True,
+        lifespan=lifespan,
     )
 
     @server.tool()
