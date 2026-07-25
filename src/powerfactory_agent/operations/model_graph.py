@@ -277,7 +277,9 @@ def _energized_asset(graph_asset: object) -> bool:
 
 
 def _expected_calculation_overlays(snapshot: ResultSnapshot) -> tuple[CalculationOverlay, ...]:
-    # Local import keeps the graph layer independent from calculation persistence.
-    from powerfactory_agent.persistence.calculation_store import build_calculation_overlays
+    # The overlay projection is a pure domain transformation shared with
+    # calculation persistence; import it from the domain projection module so
+    # the graph layer does not depend on calculation persistence.
+    from powerfactory_agent.domain.calculation_projection import build_calculation_overlays
 
     return build_calculation_overlays(snapshot)

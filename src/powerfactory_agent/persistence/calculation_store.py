@@ -7,10 +7,10 @@ from datetime import timezone
 from powerfactory_agent.domain.calculations import (
     CalculationComparison,
     CalculationOverlay,
-    CalculationOverlayKind,
     CalculationRun,
     ResultSnapshot,
 )
+from powerfactory_agent.domain.calculation_projection import build_calculation_overlays
 from powerfactory_agent.serialization import canonical_json, from_json
 
 from .database import SQLiteDatabase
@@ -162,42 +162,6 @@ class CalculationStore:
             or run.policy != snapshot.policy
         ):
             raise CalculationContextMismatchError("snapshot scope does not match calculation run")
-
-
-def build_calculation_overlays(snapshot: ResultSnapshot) -> tuple[CalculationOverlay, ...]:
-    """Create deterministic derived references; this is not a graph write operation."""
-    evaluations = {item.definition_id: item for item in snapshot.evaluations}
-    overlays: list[CalculationOverlay] = []
-    for metric in snapshot.metrics:
-        definition = metric.definition
-        result_id = f"result:{snapshot.snapshot_id}:{definition.asset_identity.value}:{definition.definition_id}"
-        overlays.append(
-            CalculationOverlay(
-                result_id,
-                CalculationOverlayKind.RESULT,
-                definition.asset_identity,
-                snapshot.run_id,
-                snapshot.snapshot_id,
-                snapshot.policy,
-                definition.definition_id,
-                None,
-            )
-        )
-        violation = evaluations[definition.definition_id].violation
-        if violation is not None:
-            overlays.append(
-                CalculationOverlay(
-                    f"violation:{snapshot.snapshot_id}:{violation.violation_key}",
-                    CalculationOverlayKind.VIOLATION,
-                    definition.asset_identity,
-                    snapshot.run_id,
-                    snapshot.snapshot_id,
-                    snapshot.policy,
-                    definition.definition_id,
-                    violation.violation_key,
-                )
-            )
-    return tuple(sorted(overlays, key=lambda item: item.overlay_id))
 
 
 __all__ = [
