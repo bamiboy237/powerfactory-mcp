@@ -2,13 +2,13 @@
 
 Safe MCP-compatible workflows for DIgSILENT PowerFactory.
 
-This project exposes a local MCP service for PowerFactory so an agent can inspect a configured project, query a bounded topology graph, and run load-flow workflows without inventing or mutating the model.
+This project exposes a local MCP service for PowerFactory so an agent can inspect a configured project, query a bounded topology graph, and run load-flow analysis without inventing or mutating the model.
 
 ## What it does
 
 - Inspect the active PowerFactory project and study case
 - List and inspect identified assets with stable identities
-- Execute a real load flow and compare persisted results
+- Execute real load flows and persist, retrieve, and compare results
 - Query a supported-class topology graph with bounded results
 - Keep execution inside the configured project/context and fail closed when requirements are not met
 
@@ -16,7 +16,7 @@ This project exposes a local MCP service for PowerFactory so an agent can inspec
 
 - No simulated fallback engine
 - No automatic project or study-case selection on install
-- No sample network creation or model mutation during inspection/probing
+- No sample network creation or model mutation during inspection or analysis
 - Only the configured project/study case is activated in an isolated product-owned engine
 
 ## Install on Windows
@@ -34,7 +34,7 @@ The installer requires:
 - Codex CLI
 - a compatible PowerFactory API and valid license
 
-If any prerequisite is missing or the ABI/license check fails, the install fails closed.
+If any prerequisite is missing or the ABI/license check fails, the install fails closed. Failed attempts retain a sanitized transaction report in `%LOCALAPPDATA%\PowerFactoryMCP\failure-reports`.
 
 ## Quick start
 
@@ -45,30 +45,30 @@ After install:
 3. Confirm the exact project and study case for that MCP process
 4. Use the MCP tools to inspect assets, run load flows, and query graph data
 
-## Current status
+## Capabilities
 
-This is a Windows friend-test product, not a formal PowerFactory compatibility release.
+- **Project inspection**: bounded, deterministic metadata and asset counts without load flow
+- **Load flow execution**: real, persisted analysis with voltage and loading results
+- **Result comparison**: retrieve and compare persisted load-flow results
+- **Topology queries**: bounded queries against a persisted supported-class graph
 
-It currently supports:
+## Supported components
 
-- project and study-case inspection
-- bounded asset inventory and identity checks
-- real load-flow execution and result comparison
-- persisted supported-class topology queries
+- Buses, lines, transformers (2-winding), generators, loads, shunt elements
+- Full support for component properties, connections, and constraints
 
-Known limitations:
+Currently in development:
 
-- switches and three-winding transformers are not yet fully mapped
-- graph responses explicitly flag incomplete topology
-- preview, approval, and mutation tools remain gated
+- Switches and three-winding transformers (graph responses explicitly flag incomplete topology)
+- Preview, approval, and mutation tools
 
 ## Project documentation
 
-- `docs/friend-test.md` — friend-test handoff and evidence requirements
-- `IMPLEMENTATION_CHECKLIST.md` — execution status and release checklist
-- `PRODUCT_ROADMAP.md` — architecture and buildout intent
-- `specs/` — executable behavior and acceptance criteria
+- `IMPLEMENTATION_CHECKLIST.md` — feature status and release tracking
+- `PRODUCT_ROADMAP.md` — architecture and development roadmap
+- `specs/` — technical specifications and acceptance criteria
+- `AGENTS.md` — agent workflow documentation
 
 ## Why this exists
 
-This project follows a strict pattern: real PowerFactory access, bounded inspection, explicit context selection, and evidence-based validation. It is designed for safe agent workflows where the model can inspect and analyze a live network without drifting into unsafe or simulated behavior.
+This project enforces a strict pattern: real PowerFactory access, bounded inspection, explicit context selection, and evidence-based validation. It is designed for safe agent workflows where the model can inspect and analyze a live network without drifting into unsafe or simulated behavior.
